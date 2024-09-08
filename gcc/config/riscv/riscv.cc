@@ -7656,6 +7656,25 @@ riscv_compute_frame_info (void)
   /* Next points the incoming stack pointer and any incoming arguments. */
 }
 
+/* Implement TARGET_CAN_INLINE_P.  */
+
+static bool
+riscv_can_inline_p (tree caller, tree callee)
+{
+  tree callee_opts = DECL_FUNCTION_SPECIFIC_TARGET (callee);
+  tree caller_opts = DECL_FUNCTION_SPECIFIC_TARGET (caller);
+
+  /* It's safe to inline if callee has no opts */
+  if (! callee_opts)
+    return true;
+
+  if (! caller_opts)
+    caller_opts = target_option_default_node;
+
+  /* Only check pointer for now */
+  return callee_opts == caller_opts;
+}
+
 /* Make sure that we're not trying to eliminate to the wrong hard frame
    pointer.  */
 
@@ -12539,6 +12558,9 @@ riscv_stack_clash_protection_alloca_probe_range (void)
 
 #undef TARGET_LEGITIMATE_ADDRESS_P
 #define TARGET_LEGITIMATE_ADDRESS_P	riscv_legitimate_address_p
+
+#undef TARGET_CAN_INLINE_P
+#define TARGET_CAN_INLINE_P riscv_can_inline_p
 
 #undef TARGET_CAN_ELIMINATE
 #define TARGET_CAN_ELIMINATE riscv_can_eliminate
