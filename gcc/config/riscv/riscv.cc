@@ -7654,6 +7654,138 @@ riscv_compute_frame_info (void)
   /* Next points the incoming stack pointer and any incoming arguments. */
 }
 
+/* Implement TARGET_CAN_INLINE_P.  */
+
+static bool
+riscv_can_inline_p (tree caller, tree callee)
+{
+  tree callee_tree = DECL_FUNCTION_SPECIFIC_TARGET (callee);
+  tree caller_tree = DECL_FUNCTION_SPECIFIC_TARGET (caller);
+
+  /* It's safe to inline if callee has no opts.  */
+  if (! callee_tree)
+    return true;
+
+  if (! caller_tree)
+    caller_tree = target_option_default_node;
+
+  struct cl_target_option *callee_opts = TREE_TARGET_OPTION (callee_tree);
+  struct cl_target_option *caller_opts = TREE_TARGET_OPTION (caller_tree);
+
+  int isa_flag_mask = MASK_MUL | MASK_ATOMIC | MASK_HARD_FLOAT
+		      | MASK_DOUBLE_FLOAT | MASK_RVC | MASK_VECTOR
+		      | MASK_FULL_V;
+
+  /* Callee and caller should have the same target options except for ISA.  */
+  int callee_target_flags = callee_opts->x_target_flags & ~isa_flag_mask;
+  int caller_target_flags = caller_opts->x_target_flags & ~isa_flag_mask;
+
+  if (callee_target_flags != caller_target_flags)
+    return false;
+
+  /* Callee's ISA should be a subset of the caller's ISA.  */
+  int callee_isa_flags = callee_opts->x_target_flags & isa_flag_mask;
+  int caller_isa_flags = caller_opts->x_target_flags & isa_flag_mask;
+
+  if (callee_isa_flags & ~caller_isa_flags)
+    return false;
+
+  if (callee_opts->x_riscv_zi_subext & ~caller_opts->x_riscv_zi_subext)
+    return false;
+
+  if (callee_opts->x_riscv_za_subext & ~caller_opts->x_riscv_za_subext)
+    return false;
+
+  if (callee_opts->x_riscv_zb_subext & ~caller_opts->x_riscv_zb_subext)
+    return false;
+
+  if (callee_opts->x_riscv_zinx_subext & ~caller_opts->x_riscv_zinx_subext)
+    return false;
+
+  if (callee_opts->x_riscv_zk_subext & ~caller_opts->x_riscv_zk_subext)
+    return false;
+
+  if (callee_opts->x_riscv_vector_elen_flags
+      & ~caller_opts->x_riscv_vector_elen_flags)
+    return false;
+
+  if (callee_opts->x_riscv_zvl_flags & ~caller_opts->x_riscv_zvl_flags)
+    return false;
+
+  if (callee_opts->x_riscv_zvb_subext & ~caller_opts->x_riscv_zvb_subext)
+    return false;
+
+  if (callee_opts->x_riscv_zvk_subext & ~caller_opts->x_riscv_zvk_subext)
+    return false;
+
+  if (callee_opts->x_riscv_zicmo_subext & ~caller_opts->x_riscv_zicmo_subext)
+    return false;
+
+  if (callee_opts->x_riscv_mop_subext & ~caller_opts->x_riscv_mop_subext)
+    return false;
+
+  if (callee_opts->x_riscv_zf_subext & ~caller_opts->x_riscv_zf_subext)
+    return false;
+
+  if (callee_opts->x_riscv_zfa_subext & ~caller_opts->x_riscv_zfa_subext)
+    return false;
+
+  if (callee_opts->x_riscv_zm_subext & ~caller_opts->x_riscv_zm_subext)
+    return false;
+
+  if (callee_opts->x_riscv_zc_subext & ~caller_opts->x_riscv_zc_subext)
+    return false;
+
+  if (callee_opts->x_riscv_sv_subext & ~caller_opts->x_riscv_sv_subext)
+    return false;
+
+  if (callee_opts->x_riscv_ztso_subext & ~caller_opts->x_riscv_ztso_subext)
+    return false;
+
+  if (callee_opts->x_riscv_xcv_subext & ~caller_opts->x_riscv_xcv_subext)
+    return false;
+
+  if (callee_opts->x_riscv_xthead_subext & ~caller_opts->x_riscv_xthead_subext)
+    return false;
+
+  if (callee_opts->x_riscv_xventana_subext
+      & ~caller_opts->x_riscv_xventana_subext)
+    return false;
+
+  if (callee_opts->x_riscv_sifive_subext & ~caller_opts->x_riscv_sifive_subext)
+    return false;
+
+  /* If the callee has always_inline set, we can ignore the rest attributes.  */
+  if (lookup_attribute ("always_inline", DECL_ATTRIBUTES (callee)))
+    return true;
+
+  if (caller_opts->x_riscv_cmodel != callee_opts->x_riscv_cmodel)
+    return false;
+
+  if (caller_opts->x_riscv_tls_dialect != callee_opts->x_riscv_tls_dialect)
+    return false;
+
+  if (caller_opts->x_riscv_stack_protector_guard_reg
+      != callee_opts->x_riscv_stack_protector_guard_reg)
+    return false;
+
+  if (caller_opts->x_riscv_stack_protector_guard_offset
+      != callee_opts->x_riscv_stack_protector_guard_offset)
+    return false;
+
+  if (caller_opts->x_rvv_vector_strict_align
+      != callee_opts->x_rvv_vector_strict_align)
+    return false;
+
+  if (caller_opts->x_riscv_tune_string
+      && callee_opts->x_riscv_tune_string
+      && strcmp (caller_opts->x_riscv_tune_string,
+		 callee_opts->x_riscv_tune_string) != 0)
+    return false;
+
+  return true;
+}
+
 /* Make sure that we're not trying to eliminate to the wrong hard frame
    pointer.  */
 
@@ -12537,6 +12669,9 @@ riscv_stack_clash_protection_alloca_probe_range (void)
 
 #undef TARGET_LEGITIMATE_ADDRESS_P
 #define TARGET_LEGITIMATE_ADDRESS_P	riscv_legitimate_address_p
+
+#undef TARGET_CAN_INLINE_P
+#define TARGET_CAN_INLINE_P riscv_can_inline_p
 
 #undef TARGET_CAN_ELIMINATE
 #define TARGET_CAN_ELIMINATE riscv_can_eliminate
