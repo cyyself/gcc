@@ -788,11 +788,6 @@ d_handle_target_clones_attribute (tree *node, tree name, tree, int,
       warning (OPT_Wattributes, "%qE attribute ignored", name);
       *no_add_attrs = true;
     }
-  else
-    {
-      /* Do not inline functions with multiple clone targets.  */
-      DECL_UNINLINABLE (*node) = 1;
-    }
 
   return NULL_TREE;
 }

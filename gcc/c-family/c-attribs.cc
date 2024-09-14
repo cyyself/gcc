@@ -6105,9 +6105,6 @@ handle_target_clones_attribute (tree *node, tree name, tree ARG_UNUSED (args),
 		   "single %<target_clones%> attribute is ignored");
 	  *no_add_attrs = true;
 	}
-      else
-      /* Do not inline functions with multiple clone targets.  */
-	DECL_UNINLINABLE (*node) = 1;
     }
   else
     {
