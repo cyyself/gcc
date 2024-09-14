@@ -7326,10 +7326,7 @@ handle_target_clones_attribute (tree *node, tree name, tree ARG_UNUSED (args),
 			  int ARG_UNUSED (flags), bool *no_add_attrs)
 {
   /* Ensure we have a function type.  */
-  if (TREE_CODE (*node) == FUNCTION_DECL)
-    /* Do not inline functions with multiple clone targets.  */
-    DECL_UNINLINABLE (*node) = 1;
-  else
+  if (TREE_CODE (*node) != FUNCTION_DECL)
     {
       warning (OPT_Wattributes, "%qE attribute ignored", name);
       *no_add_attrs = true;
