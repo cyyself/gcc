@@ -412,6 +412,22 @@ riscv_option_valid_attribute_p (tree fndecl, tree, tree args, int)
 
   /* Now we can parse the attributes and set &global_options accordingly.  */
   ret = riscv_process_target_attr (args, loc);
+  /*
+  // TODO: here we add target_version parser like aarch64
+  if (ret)
+    {
+      tree version_attr = lookup_attribute ("target_version",
+					    DECL_ATTRIBUTES (fndecl));
+      if (version_attr != NULL_TREE)
+	{
+	  // Reapply any target_version attribute after target attribute.
+	  // This should be equivalent to applying the target_version once
+	  // after processing all target attributes.
+	  tree version_args = TREE_VALUE (version_attr);
+	  ret = aarch64_process_target_version_attr (version_args);
+	}
+    }
+   */
   if (ret)
     {
       riscv_override_options_internal (&global_options);
@@ -424,3 +440,15 @@ riscv_option_valid_attribute_p (tree fndecl, tree, tree args, int)
   cl_target_option_restore (&global_options, &global_options_set, &cur_target);
   return ret;
 }
+
+/* Implement TARGET_OPTION_VALID_VERSION_ATTRIBUTE_P.  This is used to
+   process attribute ((target_version ("..."))).  */
+
+bool
+riscv_option_valid_version_attribute_p (tree fndecl, tree, tree args, int)
+{
+  printf("riscv_option_valid_version_attribute_p\n");
+  // TODO: here
+  return false;
+}
+
