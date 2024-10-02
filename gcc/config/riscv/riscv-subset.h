@@ -123,5 +123,6 @@ riscv_set_arch_by_subset_list (riscv_subset_list *, struct gcc_options *);
 extern bool
 riscv_ext_is_subset (struct cl_target_option *, struct cl_target_option *);
 extern int riscv_x_target_flags_isa_mask (void);
+extern void riscv_debug_print_isa_string (struct cl_target_option *);
 
 #endif /* ! GCC_RISCV_SUBSET_H */
