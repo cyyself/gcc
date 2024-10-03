@@ -34,6 +34,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "diagnostic-core.h"
 #include "config/riscv/riscv-protos.h"
 #include "config/riscv/riscv-subset.h"
+#include "common/config/riscv/feature_bits.h"
 
 #ifdef  TARGET_BIG_ENDIAN_DEFAULT
 #undef  TARGET_DEFAULT_TARGET_FLAGS
