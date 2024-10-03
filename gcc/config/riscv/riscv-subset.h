@@ -22,6 +22,8 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef GCC_RISCV_SUBSET_H
 #define GCC_RISCV_SUBSET_H
 
+#include "common/config/riscv/feature_bits.h"
+
 #define RISCV_DONT_CARE_VERSION -1
 
 /* Subset info.  */
@@ -120,5 +122,7 @@ public:
 extern const riscv_subset_list *riscv_cmdline_subset_list (void);
 extern void
 riscv_set_arch_by_subset_list (riscv_subset_list *, struct gcc_options *);
+extern bool riscv_minimal_hwprobe_feature_bits (const char *,
+						struct riscv_feature_bits *);
 
 #endif /* ! GCC_RISCV_SUBSET_H */
