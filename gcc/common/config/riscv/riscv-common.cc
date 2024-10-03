@@ -19,6 +19,7 @@ along with GCC; see the file COPYING3.  If not see
 
 #include <sstream>
 #include <vector>
+#include <queue>
 
 #define INCLUDE_STRING
 #define INCLUDE_SET
@@ -1760,6 +1761,75 @@ static const riscv_ext_flag_table_t riscv_ext_flag_table[] =
   {NULL, NULL, NULL, 0}
 };
 
+/* Types for recording extension to RISC-V C-API bitmask.  */
+struct riscv_ext_bitmask_table_t {
+  const char *ext;
+  int groupid;
+  int bit_position;
+};
+
+/* Mapping table between extension to RISC-V C-API extension bitmask.
+   This table should sort the extension by Linux hwprobe order to get the
+   minimal feature bits.  */
+static const riscv_ext_bitmask_table_t riscv_ext_bitmask_table[] =
+{
+  {"i",			0,  8},
+  {"m",			0, 12},
+  {"a",			0,  0},
+  {"f",			0,  5},
+  {"d",			0,  3},
+  {"c",			0,  2},
+  {"v",			0, 21},
+  {"zba",		0, 27},
+  {"zbb",		0, 28},
+  {"zbs",		0, 33},
+  {"zicboz",		0, 37},
+  {"zbc",		0, 29},
+  {"zbkb",		0, 30},
+  {"zbkc",		0, 31},
+  {"zbkx",		0, 32},
+  {"zknd",		0, 41},
+  {"zkne",		0, 42},
+  {"zknh",		0, 43},
+  {"zksed",		0, 44},
+  {"zksh",		0, 45},
+  {"zkt",		0, 46},
+  {"zvbb",		0, 48},
+  {"zvbc",		0, 49},
+  {"zvkb",		0, 52},
+  {"zvkg",		0, 53},
+  {"zvkned",		0, 54},
+  {"zvknha",		0, 55},
+  {"zvknhb",		0, 56},
+  {"zvksed",		0, 57},
+  {"zvksh",		0, 58},
+  {"zvkt",		0, 59},
+  {"zfh",		0, 35},
+  {"zfhmin",		0, 36},
+  {"zihintntl",		0, 39},
+  {"zvfh",		0, 50},
+  {"zvfhmin",		0, 51},
+  {"zfa",		0, 34},
+  {"ztso",		0, 47},
+  {"zacas",		0, 26},
+  {"zicond",		0, 38},
+  {"zihintpause",	0, 40},
+  {"zve32x",		0, 60},
+  {"zve32f",		0, 61},
+  {"zve64x",		0, 62},
+  {"zve64f",		0, 63},
+  {"zve64d",		1,  0},
+  {"zimop",		1,  1},
+  {"zca",		1,  2},
+  {"zcb",		1,  3},
+  {"zcd",		1,  4},
+  {"zcf",		1,  5},
+  {"zcmop",		1,  6},
+  {"zawrs",		1,  7},
+
+  {NULL,	       -1, -1}
+};
+
 /* Apply SUBSET_LIST to OPTS if OPTS is not null.  */
 
 void
@@ -1824,6 +1894,80 @@ riscv_x_target_flags_isa_mask (void)
 	mask |= arch_ext_flag_tab->mask;
     }
   return mask;
+}
+
+/* Get the minimal feature bits in Linux hwprobe of the given ISA string.
+
+   Used for generating Function Multi-Versioning (FMV) dispatcher for RISC-V.
+
+   The minimal feature bits refer to using the earliest extension that appeared
+   in the Linux hwprobe to support the specified ISA string.  This ensures that
+   older kernels, which may lack certain implied extensions, can still run the
+   FMV dispatcher correctly.  */
+
+bool
+riscv_minimal_hwprobe_feature_bits (const char *isa,
+				    struct riscv_feature_bits *res)
+{
+  riscv_subset_list *subset_list;
+  subset_list = riscv_subset_list::parse (isa, UNKNOWN_LOCATION);
+  if (!subset_list)
+    return false;
+
+  /* Initialize the result feature bits to zero.  */
+  res->length = RISCV_FEATURE_BITS_LENGTH;
+  for (int i = 0; i < RISCV_FEATURE_BITS_LENGTH; ++i)
+    res->features[i] = 0;
+
+  /* Use a std::set to record all visted implied extensions.  */
+  std::set <std::string> implied_exts;
+
+  /* Iterate through the extension bitmask table in Linux hwprobe order to get
+     the minimal covered feature bits.  Avoding some sub-extensions which will
+     be implied by the super-extensions like V implied Zve32x.  */
+  const riscv_ext_bitmask_table_t *ext_bitmask_tab;
+  for (ext_bitmask_tab = &riscv_ext_bitmask_table[0];
+       ext_bitmask_tab->ext;
+       ++ext_bitmask_tab)
+    {
+      /* Skip the extension if it is not in the subset list or already implied
+	 by previous extension.  */
+      if (subset_list->lookup (ext_bitmask_tab->ext) == NULL
+	  || implied_exts.count (ext_bitmask_tab->ext))
+	continue;
+
+      res->features[ext_bitmask_tab->groupid]
+	|= 1ULL << ext_bitmask_tab->bit_position;
+
+      /* Find the sub-extension using BFS and set the corresponding bit.  */
+      std::queue <const char *> search_q;
+      search_q.push (ext_bitmask_tab->ext);
+
+      while (!search_q.empty ())
+	{
+	  const char * search_ext = search_q.front ();
+	  search_q.pop ();
+
+	  /* Iterate through the implied extension table.  */
+	  const riscv_implied_info_t *implied_info;
+	  for (implied_info = &riscv_implied_info[0];
+	      implied_info->ext;
+	      ++implied_info)
+	    {
+	      /* When the search extension matches the implied extension and
+		 the implied extension has not been visited, mark the implied
+		 extension in the implied_exts set and push it into the
+		 queue.  */
+	      if (implied_info->match (subset_list, search_ext)
+		  && implied_exts.count (implied_info->implied_ext) == 0)
+		{
+		  implied_exts.insert (implied_info->implied_ext);
+		  search_q.push (implied_info->implied_ext);
+		}
+	    }
+	}
+    }
+  return true;
 }
 
 /* Parse a RISC-V ISA string into an option mask.  Must clear or set all arch
