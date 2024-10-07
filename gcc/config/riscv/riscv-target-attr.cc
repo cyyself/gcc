@@ -304,6 +304,55 @@ num_occurrences_in_str (char c, char *str)
   return res;
 }
 
+/* Parse the string ARGS that contains the target attribute information
+   and update the global target options space. */
+
+bool
+riscv_process_target_attr (const char *args, location_t loc) {
+  size_t len = strlen (args);
+
+  /* No need to emit warning or error on empty string here, generic code already
+     handle this case.  */
+  if (len == 0)
+    {
+      return false;
+    }
+
+  std::unique_ptr<char[]> buf (new char[len+1]);
+  char *str_to_check = buf.get ();
+  strcpy (str_to_check, args);
+
+  /* Used to catch empty spaces between semi-colons i.e.
+     attribute ((target ("attr1;;attr2"))).  */
+  unsigned int num_semicolons = num_occurrences_in_str (';', str_to_check);
+
+  /* Handle multiple target attributes separated by ';'.  */
+  char *token = strtok_r (str_to_check, ";", &str_to_check);
+
+  riscv_target_attr_parser attr_parser (loc);
+  unsigned int num_attrs = 0;
+  while (token)
+    {
+      num_attrs++;
+      if (!riscv_process_one_target_attr (token, loc, attr_parser))
+	return false;
+
+      token = strtok_r (NULL, ";", &str_to_check);
+    }
+
+  if (num_attrs != num_semicolons + 1)
+    {
+      error_at (loc, "malformed %<target(\"%s\")%> attribute",
+		args);
+      return false;
+    }
+
+  /* Apply settings from target attribute.  */
+  attr_parser.update_settings (&global_options);
+
+  return true;
+}
+
 /* Parse the tree in ARGS that contains the target attribute information
    and update the global target options space.  */
 
@@ -332,48 +381,7 @@ riscv_process_target_attr (tree args, location_t loc)
       return false;
     }
 
-  size_t len = strlen (TREE_STRING_POINTER (args));
-
-  /* No need to emit warning or error on empty string here, generic code already
-     handle this case.  */
-  if (len == 0)
-    {
-      return false;
-    }
-
-  std::unique_ptr<char[]> buf (new char[len+1]);
-  char *str_to_check = buf.get ();
-  strcpy (str_to_check, TREE_STRING_POINTER (args));
-
-  /* Used to catch empty spaces between semi-colons i.e.
-     attribute ((target ("attr1;;attr2"))).  */
-  unsigned int num_semicolons = num_occurrences_in_str (';', str_to_check);
-
-  /* Handle multiple target attributes separated by ';'.  */
-  char *token = strtok_r (str_to_check, ";", &str_to_check);
-
-  riscv_target_attr_parser attr_parser (loc);
-  unsigned int num_attrs = 0;
-  while (token)
-    {
-      num_attrs++;
-      if (!riscv_process_one_target_attr (token, loc, attr_parser))
-	return false;
-
-      token = strtok_r (NULL, ";", &str_to_check);
-    }
-
-  if (num_attrs != num_semicolons + 1)
-    {
-      error_at (loc, "malformed %<target(\"%s\")%> attribute",
-		TREE_STRING_POINTER (args));
-      return false;
-    }
-
-  /* Apply settings from target attribute.  */
-  attr_parser.update_settings (&global_options);
-
-  return true;
+  return riscv_process_target_attr (TREE_STRING_POINTER (args), loc);
 }
 
 /* Implement TARGET_OPTION_VALID_ATTRIBUTE_P.
@@ -412,6 +420,22 @@ riscv_option_valid_attribute_p (tree fndecl, tree, tree args, int)
 
   /* Now we can parse the attributes and set &global_options accordingly.  */
   ret = riscv_process_target_attr (args, loc);
+  /*
+  // TODO: here we add target_version parser like aarch64
+  if (ret)
+    {
+      tree version_attr = lookup_attribute ("target_version",
+					    DECL_ATTRIBUTES (fndecl));
+      if (version_attr != NULL_TREE)
+	{
+	  // Reapply any target_version attribute after target attribute.
+	  // This should be equivalent to applying the target_version once
+	  // after processing all target attributes.
+	  tree version_args = TREE_VALUE (version_attr);
+	  ret = aarch64_process_target_version_attr (version_args);
+	}
+    }
+   */
   if (ret)
     {
       riscv_override_options_internal (&global_options);
@@ -423,4 +447,15 @@ riscv_option_valid_attribute_p (tree fndecl, tree, tree args, int)
   /* Restore current target options to original state.  */
   cl_target_option_restore (&global_options, &global_options_set, &cur_target);
   return ret;
+}
+
+/* Implement TARGET_OPTION_VALID_VERSION_ATTRIBUTE_P.  This is used to
+   process attribute ((target_version ("..."))).  */
+
+bool
+riscv_option_valid_version_attribute_p (tree fndecl, tree, tree args, int)
+{
+  fprintf(stderr, "Unimplemented riscv_option_valid_version_attribute_p\n");
+  gcc_unreachable (); // TODO
+  return false;
 }
