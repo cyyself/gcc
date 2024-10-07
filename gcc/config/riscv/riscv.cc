@@ -77,6 +77,9 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-dfa.h"
 #include "target-globals.h"
 #include "riscv-v.h"
+#include "cgraph.h"
+#include "langhooks.h"
+#include "gimplify.h"
 
 /* This file should be included last.  */
 #include "target-def.h"
@@ -12574,6 +12577,611 @@ riscv_c_mode_for_floating_type (enum tree_index ti)
   return default_mode_for_floating_type (ti);
 }
 
+/* Compare priorities of two version decls. Return:
+     1: mask1 is higher priority
+    -1: mask2 is higher priority
+     0: masks are equal.  */
+int
+riscv_compare_version_priority (tree decl1, tree decl2)
+{
+  fprintf(stderr, "riscv_compare_version_priority\n");
+  gcc_unreachable ();
+  return 0;
+}
+
+
+/* This function returns true if FN1 and FN2 are versions of the same function,
+   that is, the target_version attributes of the function decls are different.
+   This assumes that FN1 and FN2 have the same signature.  */
+
+bool
+riscv_common_function_versions (tree fn1, tree fn2)
+{
+  if (TREE_CODE (fn1) != FUNCTION_DECL
+      || TREE_CODE (fn2) != FUNCTION_DECL)
+    return false;
+  
+  fprintf(stderr, "riscv_common_function_versions\n");
+
+  return false; // TODO: return (riscv_compare_version_priority (fn1, fn2) != 0);
+}
+
+/* This adds a condition to the basic_block NEW_BB in function FUNCTION_DECL
+   to return a pointer to VERSION_DECL if all feature bits specified in
+   FEATURE_MASK are not set in MASK_VAR.  This function will be called during
+   version dispatch to decide which function version to execute.  It returns
+   the basic block at the end, to which more conditions can be added.  */
+static basic_block
+add_condition_to_bb (tree function_decl, tree version_decl,
+		     bool is_default,
+		     const struct riscv_feature_bits *features,
+		     tree mask_var, basic_block new_bb)
+{
+  gimple *return_stmt;
+  tree convert_expr, result_var;
+  gimple *convert_stmt;
+  gimple *if_else_stmt;
+
+  basic_block bb1, bb2, bb3;
+  edge e12, e23;
+
+  gimple_seq gseq;
+
+  push_cfun (DECL_STRUCT_FUNCTION (function_decl));
+
+  gcc_assert (new_bb != NULL);
+  gseq = bb_seq (new_bb);
+
+  convert_expr = build1 (CONVERT_EXPR, ptr_type_node,
+			 build_fold_addr_expr (version_decl));
+  result_var = create_tmp_var (ptr_type_node);
+  convert_stmt = gimple_build_assign (result_var, convert_expr);
+  return_stmt = gimple_build_return (result_var);
+
+  if (is_default)
+    {
+      /* Default version.  */
+      gimple_seq_add_stmt (&gseq, convert_stmt);
+      gimple_seq_add_stmt (&gseq, return_stmt);
+      set_bb_seq (new_bb, gseq);
+      gimple_set_bb (convert_stmt, new_bb);
+      gimple_set_bb (return_stmt, new_bb);
+      pop_cfun ();
+      return new_bb;
+    }
+
+  tree and_expr_var = create_tmp_var (long_long_unsigned_type_node);
+  tree and_expr = build2 (BIT_AND_EXPR,
+			  long_long_unsigned_type_node,
+			  mask_var,
+			  build_int_cst (long_long_unsigned_type_node,
+					 features->features[0])); // TODO: care for features[1]
+  gimple *and_stmt = gimple_build_assign (and_expr_var, and_expr);
+  gimple_set_block (and_stmt, DECL_INITIAL (function_decl));
+  gimple_set_bb (and_stmt, new_bb);
+  gimple_seq_add_stmt (&gseq, and_stmt);
+
+  tree zero_llu = build_int_cst (long_long_unsigned_type_node, 0);
+  if_else_stmt = gimple_build_cond (EQ_EXPR, and_expr_var, zero_llu,
+				    NULL_TREE, NULL_TREE);
+  gimple_set_block (if_else_stmt, DECL_INITIAL (function_decl));
+  gimple_set_bb (if_else_stmt, new_bb);
+  gimple_seq_add_stmt (&gseq, if_else_stmt);
+
+  gimple_seq_add_stmt (&gseq, convert_stmt);
+  gimple_seq_add_stmt (&gseq, return_stmt);
+  set_bb_seq (new_bb, gseq);
+
+  bb1 = new_bb;
+  e12 = split_block (bb1, if_else_stmt);
+  bb2 = e12->dest;
+  e12->flags &= ~EDGE_FALLTHRU;
+  e12->flags |= EDGE_TRUE_VALUE;
+
+  e23 = split_block (bb2, return_stmt);
+
+  gimple_set_bb (convert_stmt, bb2);
+  gimple_set_bb (return_stmt, bb2);
+
+  bb3 = e23->dest;
+  make_edge (bb1, bb3, EDGE_FALSE_VALUE);
+
+  remove_edge (e23);
+  make_edge (bb2, EXIT_BLOCK_PTR_FOR_FN (cfun), 0);
+
+  pop_cfun ();
+
+  return bb3;
+}
+
+/* This function generates the dispatch function for
+   multi-versioned functions.  DISPATCH_DECL is the function which will
+   contain the dispatch logic.  FNDECLS are the function choices for
+   dispatch, and is a tree chain.  EMPTY_BB is the basic block pointer
+   in DISPATCH_DECL in which the dispatch code is generated.  */
+
+static int
+dispatch_function_versions (tree dispatch_decl,
+			    void *fndecls_p,
+			    basic_block *empty_bb)
+{
+  fprintf(stderr, "dispatch_function_versions\n");
+  gimple *ifunc_cpu_init_stmt;
+  gimple_seq gseq;
+  vec<tree> *fndecls;
+
+  gcc_assert (dispatch_decl != NULL
+	      && fndecls_p != NULL
+	      && empty_bb != NULL);
+
+  push_cfun (DECL_STRUCT_FUNCTION (dispatch_decl));
+
+  gseq = bb_seq (*empty_bb);
+  /* Function version dispatch is via IFUNC.  IFUNC resolvers fire before
+     constructors, so explicity call __init_riscv_feature_bits here.  */
+  tree init_fn_type = build_function_type_list (void_type_node,
+						long_unsigned_type_node,
+						ptr_type_node,
+						NULL);
+  tree init_fn_id = get_identifier ("__init_riscv_feature_bits");
+  tree init_fn_decl = build_decl (UNKNOWN_LOCATION, FUNCTION_DECL,
+				  init_fn_id, init_fn_type);
+  ifunc_cpu_init_stmt = gimple_build_call (init_fn_decl, 0);
+  gimple_seq_add_stmt (&gseq, ifunc_cpu_init_stmt);
+  gimple_set_bb (ifunc_cpu_init_stmt, *empty_bb);
+
+  /* Build the struct type for __riscv_feature_bits.  */
+  tree global_type = lang_hooks.types.make_type (RECORD_TYPE);
+  tree field1 = build_decl (UNKNOWN_LOCATION, FIELD_DECL,
+			    get_identifier ("length"),
+			    unsigned_type_node);
+  tree field2 = build_decl (UNKNOWN_LOCATION, FIELD_DECL,
+                            get_identifier ("features"),
+                            long_long_unsigned_type_node); // TODO: build_array_type ?
+  DECL_FIELD_CONTEXT (field1) = global_type;
+  DECL_FIELD_CONTEXT (field2) = global_type;
+  TYPE_FIELDS (global_type) = field1;
+  DECL_CHAIN (field1) = field2;
+  layout_type (global_type);
+
+  tree global_var = build_decl (UNKNOWN_LOCATION, VAR_DECL,
+				get_identifier ("__riscv_feature_bits"),
+				global_type);
+  DECL_EXTERNAL (global_var) = 1;
+  tree mask_var = create_tmp_var (long_long_unsigned_type_node);
+
+  tree component_expr = build3 (COMPONENT_REF, long_long_unsigned_type_node,
+				global_var, field2, NULL_TREE);
+  gimple *component_stmt = gimple_build_assign (mask_var, component_expr);
+  gimple_set_block (component_stmt, DECL_INITIAL (dispatch_decl));
+  gimple_set_bb (component_stmt, *empty_bb);
+  gimple_seq_add_stmt (&gseq, component_stmt);
+
+  tree not_expr = build1 (BIT_NOT_EXPR, long_long_unsigned_type_node, mask_var);
+  gimple *not_stmt = gimple_build_assign (mask_var, not_expr);
+  gimple_set_block (not_stmt, DECL_INITIAL (dispatch_decl));
+  gimple_set_bb (not_stmt, *empty_bb);
+  gimple_seq_add_stmt (&gseq, not_stmt);
+
+  set_bb_seq (*empty_bb, gseq);
+
+  pop_cfun ();
+
+  /* fndecls_p is actually a vector.  */
+  fndecls = static_cast<vec<tree> *> (fndecls_p);
+
+  /* At least one more version other than the default.  */
+  unsigned int num_versions = fndecls->length ();
+  bool ok = (num_versions >= 2);
+  fprintf(stderr, "num_versions: %d %d\n", num_versions, ok ? 1 : 0);
+  gcc_assert (ok);
+
+  struct function_version_info
+    {
+      tree version_decl;
+      bool is_default;
+      int priority; /* reserved for future use */
+      struct riscv_feature_bits features;
+    } *function_versions;
+
+  function_versions = (struct function_version_info *)
+    XNEWVEC (struct function_version_info, (num_versions));
+
+  unsigned int actual_versions = 0;
+
+  for (tree version_decl : *fndecls)
+    {
+      function_versions [actual_versions].version_decl = version_decl;
+      // Get attribute string, parse it and find the right features.
+      tree version_attr = lookup_attribute ("target", DECL_ATTRIBUTES (version_decl));
+      gcc_assert (version_attr != NULL);
+      const char *version_string = TREE_STRING_POINTER (TREE_VALUE
+                                                        (TREE_VALUE
+                                                          (version_attr)));
+      fprintf(stderr, "version_string: %s\n", version_string);
+      if (strcmp (version_string, "default") == 0) {
+        function_versions [actual_versions].is_default = true;
+        /* Don't care features for default version.  */
+      }
+      else 
+      {
+        function_versions [actual_versions].is_default = false;
+        struct cl_target_option cur_target;
+        cl_target_option_save (&cur_target, &global_options,
+                                &global_options_set);
+        riscv_process_target_attr(version_string,
+                                  DECL_SOURCE_LOCATION (version_decl));
+        riscv_minimal_hwprobe_feature_bits
+          (global_options.x_riscv_arch_string,
+            &function_versions[actual_versions].features);
+        cl_target_option_restore (&global_options, &global_options_set,
+                                  &cur_target);
+      }
+      actual_versions++;
+    }
+  
+
+  auto compare_feature_version_info = [](const void *p1, const void *p2) {
+    // TODO: fix here
+    const function_version_info v1 = *(const function_version_info *)p1;
+    const function_version_info v2 = *(const function_version_info *)p2;
+    if (v1.is_default != v2.is_default)
+      return v1.is_default ? 1 : -1;
+    if (v1.priority != v2.priority)
+      return v1.priority - v2.priority;
+    /* If the priority is the same, sort by the number of feature bits set.  */
+    int popcount1 = 0, popcount2 = 0;
+    for (int i = 0; i < RISCV_FEATURE_BITS_LENGTH; i++)
+      popcount1 += __builtin_popcountll (v1.features.features[i]);
+    for (int i = 0; i < RISCV_FEATURE_BITS_LENGTH; i++)
+      popcount2 += __builtin_popcountll (v2.features.features[i]);
+    return popcount1 - popcount2;
+  };
+
+  /* Sort the versions according to descending order of dispatch priority.  */
+  qsort (function_versions, actual_versions,
+	 sizeof (struct function_version_info), compare_feature_version_info);
+
+  for (unsigned int i = 0; i < actual_versions; ++i) 
+    {
+      *empty_bb = add_condition_to_bb (dispatch_decl,
+                                      function_versions[i].version_decl,
+                                      function_versions[i].is_default,
+                                      &function_versions[i].features,
+                                      mask_var,
+                                      *empty_bb);
+    }
+
+  free (function_versions);
+  return 0;
+}
+
+/* Return an identifier for the base assembler name of a versioned function.
+   This is computed by taking the default version's assembler name, and
+   stripping off the ".default" suffix if it's already been appended.  */
+
+static tree
+get_suffixed_assembler_name (tree default_decl, const char *suffix)
+{
+  fprintf(stderr, "get_suffixed_assembler_name\n");
+  std::string name = IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (default_decl));
+
+  auto size = name.size ();
+  if (size >= 8 && name.compare (size - 8, 8, ".default") == 0)
+    name.resize (size - 8);
+  name += suffix;
+  fprintf(stderr, "get_suffixed_assembler_name: %s\n", name.c_str());
+  return get_identifier (name.c_str());
+}
+
+/* Make the resolver function decl to dispatch the versions of
+   a multi-versioned function,  DEFAULT_DECL.  IFUNC_ALIAS_DECL is
+   ifunc alias that will point to the created resolver.  Create an
+   empty basic block in the resolver and store the pointer in
+   EMPTY_BB.  Return the decl of the resolver function.  */
+
+static tree
+make_resolver_func (const tree default_decl,
+		    const tree ifunc_alias_decl,
+		    basic_block *empty_bb)
+{
+  fprintf(stderr, "make_resolver_func\n");
+  tree decl, type, t;
+
+  /* Create resolver function name based on default_decl.  We need to remove an
+     existing ".default" suffix if this has already been appended.  */
+  tree decl_name = get_suffixed_assembler_name (default_decl, ".resolver");
+  const char *resolver_name = IDENTIFIER_POINTER (decl_name);
+
+  /* The resolver function should have signature
+     (void *) resolver (uint64_t, void *) */
+  type = build_function_type_list (ptr_type_node,
+				   uint64_type_node,
+				   ptr_type_node,
+				   NULL_TREE);
+
+  decl = build_fn_decl (resolver_name, type);
+  SET_DECL_ASSEMBLER_NAME (decl, decl_name);
+
+  DECL_NAME (decl) = decl_name;
+  TREE_USED (decl) = 1;
+  DECL_ARTIFICIAL (decl) = 1;
+  DECL_IGNORED_P (decl) = 1;
+  TREE_PUBLIC (decl) = 0;
+  DECL_UNINLINABLE (decl) = 1;
+
+  /* Resolver is not external, body is generated.  */
+  DECL_EXTERNAL (decl) = 0;
+  DECL_EXTERNAL (ifunc_alias_decl) = 0;
+
+  DECL_CONTEXT (decl) = NULL_TREE;
+  DECL_INITIAL (decl) = make_node (BLOCK);
+  DECL_STATIC_CONSTRUCTOR (decl) = 0;
+
+  if (DECL_COMDAT_GROUP (default_decl)
+      || TREE_PUBLIC (default_decl))
+    {
+      /* In this case, each translation unit with a call to this
+	 versioned function will put out a resolver.  Ensure it
+	 is comdat to keep just one copy.  */
+      DECL_COMDAT (decl) = 1;
+      make_decl_one_only (decl, DECL_ASSEMBLER_NAME (decl));
+    }
+  else
+    TREE_PUBLIC (ifunc_alias_decl) = 0;
+
+  /* Build result decl and add to function_decl. */
+  t = build_decl (UNKNOWN_LOCATION, RESULT_DECL, NULL_TREE, ptr_type_node);
+  DECL_CONTEXT (t) = decl;
+  DECL_ARTIFICIAL (t) = 1;
+  DECL_IGNORED_P (t) = 1;
+  DECL_RESULT (decl) = t;
+
+  /* Build parameter decls and add to function_decl. */
+  tree arg1 = build_decl (UNKNOWN_LOCATION, PARM_DECL,
+			  get_identifier ("hwcap"),
+			  uint64_type_node);
+  tree arg2 = build_decl (UNKNOWN_LOCATION, PARM_DECL,
+			  get_identifier ("hwprobe_func"),
+			  ptr_type_node);
+  DECL_CONTEXT (arg1) = decl;
+  DECL_CONTEXT (arg2) = decl;
+  DECL_ARTIFICIAL (arg1) = 1;
+  DECL_ARTIFICIAL (arg2) = 1;
+  DECL_IGNORED_P (arg1) = 1;
+  DECL_IGNORED_P (arg2) = 1;
+  DECL_ARG_TYPE (arg1) = uint64_type_node;
+  DECL_ARG_TYPE (arg2) = ptr_type_node;
+  DECL_ARGUMENTS (decl) = arg1;
+  TREE_CHAIN (arg1) = arg2;
+
+  gimplify_function_tree (decl);
+  push_cfun (DECL_STRUCT_FUNCTION (decl));
+  *empty_bb = init_lowered_empty_function (decl, false,
+					   profile_count::uninitialized ());
+
+  cgraph_node::add_new_function (decl, true);
+  symtab->call_cgraph_insertion_hooks (cgraph_node::get_create (decl));
+
+  pop_cfun ();
+
+  gcc_assert (ifunc_alias_decl != NULL);
+  /* Mark ifunc_alias_decl as "ifunc" with resolver as resolver_name.  */
+  DECL_ATTRIBUTES (ifunc_alias_decl)
+    = make_attribute ("ifunc", resolver_name,
+		      DECL_ATTRIBUTES (ifunc_alias_decl));
+
+  /* Create the alias for dispatch to resolver here.  */
+  cgraph_node::create_same_body_alias (ifunc_alias_decl, decl);
+  return decl;
+}
+
+/* Implement TARGET_MANGLE_DECL_ASSEMBLER_NAME, to add function multiversioning
+   suffixes.  */
+
+tree
+riscv_mangle_decl_assembler_name (tree decl, tree id)
+{
+  /* For function version, add the target suffix to the assembler name.  */
+  if (TREE_CODE (decl) == FUNCTION_DECL
+      && DECL_FUNCTION_VERSIONED (decl))
+    {
+      std::string name = IDENTIFIER_POINTER (id) + std::string(".");
+      struct cl_target_option *target_opts = 
+        TREE_TARGET_OPTION (DECL_FUNCTION_SPECIFIC_TARGET (decl));
+      tree target_attr = lookup_attribute ("target", DECL_ATTRIBUTES (decl));
+      const char *version_string = TREE_STRING_POINTER (TREE_VALUE (TREE_VALUE
+                                                        (target_attr)));
+      for (const char *c = version_string; *c; c++)
+        name += ISALNUM(*c) == 0 ? '_' : *c;
+      fprintf(stderr, "riscv_mangle_decl_assembler_name: %s %s\n", name.c_str(), version_string);
+      return get_identifier (name.c_str ());
+    }
+
+  return id;
+}
+
+/* Implement TARGET_GENERATE_VERSION_DISPATCHER_BODY.  */
+
+tree
+riscv_generate_version_dispatcher_body (void *node_p)
+{
+  fprintf(stderr, "riscv_generate_version_dispatcher_body\n");
+  tree resolver_decl;
+  basic_block empty_bb;
+  tree default_ver_decl;
+  struct cgraph_node *versn;
+  struct cgraph_node *node;
+
+  struct cgraph_function_version_info *node_version_info = NULL;
+  struct cgraph_function_version_info *versn_info = NULL;
+
+  node = (cgraph_node *)node_p;
+
+  node_version_info = node->function_version ();
+  gcc_assert (node->dispatcher_function
+	      && node_version_info != NULL);
+
+  if (node_version_info->dispatcher_resolver)
+    return node_version_info->dispatcher_resolver;
+
+  /* The first version in the chain corresponds to the default version.  */
+  default_ver_decl = node_version_info->next->this_node->decl;
+
+  /* node is going to be an alias, so remove the finalized bit.  */
+  node->definition = false;
+
+  resolver_decl = make_resolver_func (default_ver_decl,
+				      node->decl, &empty_bb);
+
+  node_version_info->dispatcher_resolver = resolver_decl;
+
+  push_cfun (DECL_STRUCT_FUNCTION (resolver_decl));
+
+  auto_vec<tree, 2> fn_ver_vec;
+
+  for (versn_info = node_version_info->next; versn_info;
+       versn_info = versn_info->next)
+    {
+      versn = versn_info->this_node;
+      /* Check for virtual functions here again, as by this time it should
+	 have been determined if this function needs a vtable index or
+	 not.  This happens for methods in derived classes that override
+	 virtual methods in base classes but are not explicitly marked as
+	 virtual.  */
+      if (DECL_VINDEX (versn->decl))
+	sorry ("virtual function multiversioning not supported");
+
+      fn_ver_vec.safe_push (versn->decl);
+    }
+
+  dispatch_function_versions (resolver_decl, &fn_ver_vec, &empty_bb);
+  cgraph_edge::rebuild_edges ();
+  pop_cfun ();
+
+  /* Fix up symbol names.  First we need to obtain the base name, which may
+     have already been mangled.  */
+  tree base_name = get_suffixed_assembler_name (default_ver_decl, "");
+
+  /* We need to redo the version mangling on the non-default versions for the
+     target_clones case.  Redoing the mangling for the target_version case is
+     redundant but does no harm.  We need to skip the default version, because
+     expand_clones will append ".default" later; fortunately that suffix is the
+     one we want anyway.  */
+  for (versn_info = node_version_info->next->next; versn_info;
+       versn_info = versn_info->next)
+    {
+      tree version_decl = versn_info->this_node->decl;
+      tree name = riscv_mangle_decl_assembler_name (version_decl,
+						    base_name);
+      symtab->change_decl_assembler_name (version_decl, name);
+    }
+
+  /* We also need to use the base name for the ifunc declaration.  */
+  symtab->change_decl_assembler_name (node->decl, base_name);
+
+  return resolver_decl;
+}
+
+/* Make a dispatcher declaration for the multi-versioned function DECL.
+   Calls to DECL function will be replaced with calls to the dispatcher
+   by the front-end.  Returns the decl of the dispatcher function.  */
+
+tree
+riscv_get_function_versions_dispatcher (void *decl)
+{
+  fprintf(stderr, "riscv_get_function_versions_dispatcher\n");
+  tree fn = (tree) decl;
+  struct cgraph_node *node = NULL;
+  struct cgraph_node *default_node = NULL;
+  struct cgraph_function_version_info *node_v = NULL;
+  struct cgraph_function_version_info *first_v = NULL;
+
+  tree dispatch_decl = NULL;
+
+  struct cgraph_function_version_info *default_version_info = NULL;
+
+  gcc_assert (fn != NULL && DECL_FUNCTION_VERSIONED (fn));
+
+  node = cgraph_node::get (fn);
+  gcc_assert (node != NULL);
+
+  node_v = node->function_version ();
+  gcc_assert (node_v != NULL);
+
+  if (node_v->dispatcher_resolver != NULL)
+    return node_v->dispatcher_resolver;
+
+  /* Find the default version and make it the first node.  */
+  first_v = node_v;
+  /* Go to the beginning of the chain.  */
+  while (first_v->prev != NULL)
+    first_v = first_v->prev;
+  default_version_info = first_v;
+  /*
+  while (default_version_info != NULL)
+    {
+      if (get_feature_mask_for_version
+	    (default_version_info->this_node->decl) == 0ULL)
+	break;
+      default_version_info = default_version_info->next;
+    }
+    // TODO: Here
+   */
+
+  /* If there is no default node, just return NULL.  */
+  if (default_version_info == NULL)
+    return NULL;
+
+  /* Make default info the first node.  */
+  if (first_v != default_version_info)
+    {
+      default_version_info->prev->next = default_version_info->next;
+      if (default_version_info->next)
+	default_version_info->next->prev = default_version_info->prev;
+      first_v->prev = default_version_info;
+      default_version_info->next = first_v;
+      default_version_info->prev = NULL;
+    }
+
+  default_node = default_version_info->this_node;
+
+  if (targetm.has_ifunc_p ())
+    {
+      struct cgraph_function_version_info *it_v = NULL;
+      struct cgraph_node *dispatcher_node = NULL;
+      struct cgraph_function_version_info *dispatcher_version_info = NULL;
+
+      /* Right now, the dispatching is done via ifunc.  */
+      dispatch_decl = make_dispatcher_decl (default_node->decl);
+      TREE_NOTHROW (dispatch_decl) = TREE_NOTHROW (fn);
+
+      dispatcher_node = cgraph_node::get_create (dispatch_decl);
+      gcc_assert (dispatcher_node != NULL);
+      dispatcher_node->dispatcher_function = 1;
+      dispatcher_version_info
+	= dispatcher_node->insert_new_function_version ();
+      dispatcher_version_info->next = default_version_info;
+      dispatcher_node->definition = 1;
+
+      /* Set the dispatcher for all the versions.  */
+      it_v = default_version_info;
+      while (it_v != NULL)
+	{
+	  it_v->dispatcher_resolver = dispatch_decl;
+	  it_v = it_v->next;
+	}
+    }
+  else
+    {
+      error_at (DECL_SOURCE_LOCATION (default_node->decl),
+		"multiversioning needs %<ifunc%> which is not supported "
+		"on this target");
+    }
+
+  return dispatch_decl;
+}
+
 /* On riscv we have an ABI defined safe buffer.  This constant is used to
    determining the probe offset for alloca.  */
 
@@ -12599,6 +13207,10 @@ riscv_stack_clash_protection_alloca_probe_range (void)
 
 #undef TARGET_OPTION_VALID_ATTRIBUTE_P
 #define TARGET_OPTION_VALID_ATTRIBUTE_P riscv_option_valid_attribute_p
+
+#undef TARGET_OPTION_VALID_VERSION_ATTRIBUTE_P
+#define TARGET_OPTION_VALID_VERSION_ATTRIBUTE_P \
+  riscv_option_valid_version_attribute_p
 
 #undef TARGET_LEGITIMIZE_ADDRESS
 #define TARGET_LEGITIMIZE_ADDRESS riscv_legitimize_address
@@ -12730,6 +13342,9 @@ riscv_stack_clash_protection_alloca_probe_range (void)
 
 #undef TARGET_LEGITIMATE_ADDRESS_P
 #define TARGET_LEGITIMATE_ADDRESS_P	riscv_legitimate_address_p
+
+#undef TARGET_OPTION_FUNCTION_VERSIONS
+#define TARGET_OPTION_FUNCTION_VERSIONS common_function_versions
 
 #undef TARGET_CAN_INLINE_P
 #define TARGET_CAN_INLINE_P riscv_can_inline_p
@@ -12947,6 +13562,23 @@ riscv_stack_clash_protection_alloca_probe_range (void)
 
 #undef TARGET_C_MODE_FOR_FLOATING_TYPE
 #define TARGET_C_MODE_FOR_FLOATING_TYPE riscv_c_mode_for_floating_type
+
+#undef TARGET_OPTION_FUNCTION_VERSIONS
+#define TARGET_OPTION_FUNCTION_VERSIONS riscv_common_function_versions
+
+#undef TARGET_COMPARE_VERSION_PRIORITY
+#define TARGET_COMPARE_VERSION_PRIORITY riscv_compare_version_priority
+
+#undef TARGET_GENERATE_VERSION_DISPATCHER_BODY
+#define TARGET_GENERATE_VERSION_DISPATCHER_BODY \
+  riscv_generate_version_dispatcher_body
+
+#undef TARGET_GET_FUNCTION_VERSIONS_DISPATCHER
+#define TARGET_GET_FUNCTION_VERSIONS_DISPATCHER \
+  riscv_get_function_versions_dispatcher
+
+#undef TARGET_MANGLE_DECL_ASSEMBLER_NAME
+#define TARGET_MANGLE_DECL_ASSEMBLER_NAME riscv_mangle_decl_assembler_name
 
 struct gcc_target targetm = TARGET_INITIALIZER;
 
