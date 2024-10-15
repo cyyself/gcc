@@ -799,6 +799,10 @@ extern bool
 riscv_option_valid_version_attribute_p (tree, tree, tree, int);
 extern bool
 riscv_process_target_attr(const char *, location_t);
+extern bool
+riscv_common_function_versions (tree, tree);
+extern int
+riscv_compare_version_priority (tree, tree);
 extern void
 riscv_override_options_internal (struct gcc_options *);
 extern void riscv_option_override (void);

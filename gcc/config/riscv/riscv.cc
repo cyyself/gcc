@@ -85,6 +85,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "target-def.h"
 #include "riscv-vector-costs.h"
 #include "riscv-subset.h"
+//#include "riscv-target-attr.cc"
 
 /* True if X is an UNSPEC wrapper around a SYMBOL_REF or LABEL_REF.  */
 #define UNSPEC_ADDRESS_P(X)					\
@@ -12447,34 +12448,203 @@ riscv_c_mode_for_floating_type (enum tree_index ti)
   return default_mode_for_floating_type (ti);
 }
 
+/* Types for recording extension to RISC-V C-API bitmask.  */
+//struct riscv_ext_bitmask_table_t {
+//  const char *ext;
+//  int groupid;
+//  int bit_position;
+//};
+//
+//static const riscv_ext_bitmask_table_t riscv_ext_bitmask_table[] =
+//{
+//  {"i",			0,  8},
+//  {"m",			0, 12},
+//  {"a",			0,  0},
+//  {"f",			0,  5},
+//  {"d",			0,  3},
+//  {"c",			0,  2},
+//  {"v",			0, 21},
+//  {"zba",		0, 27},
+//  {"zbb",		0, 28},
+//  {"zbs",		0, 33},
+//  {"zicboz",		0, 37},
+//  {"zbc",		0, 29},
+//  {"zbkb",		0, 30},
+//  {"zbkc",		0, 31},
+//  {"zbkx",		0, 32},
+//  {"zknd",		0, 41},
+//  {"zkne",		0, 42},
+//  {"zknh",		0, 43},
+//  {"zksed",		0, 44},
+//  {"zksh",		0, 45},
+//  {"zkt",		0, 46},
+//  {"zvbb",		0, 48},
+//  {"zvbc",		0, 49},
+//  {"zvkb",		0, 52},
+//  {"zvkg",		0, 53},
+//  {"zvkned",		0, 54},
+//  {"zvknha",		0, 55},
+//  {"zvknhb",		0, 56},
+//  {"zvksed",		0, 57},
+//  {"zvksh",		0, 58},
+//  {"zvkt",		0, 59},
+//  {"zfh",		0, 35},
+//  {"zfhmin",		0, 36},
+//  {"zihintntl",		0, 39},
+//  {"zvfh",		0, 50},
+//  {"zvfhmin",		0, 51},
+//  {"zfa",		0, 34},
+//  {"ztso",		0, 47},
+//  {"zacas",		0, 26},
+//  {"zicond",		0, 38},
+//  {"zihintpause",	0, 40},
+//  {"zve32x",		0, 60},
+//  {"zve32f",		0, 61},
+//  {"zve64x",		0, 62},
+//  {"zve64f",		0, 63},
+//  {"zve64d",		1,  0},
+//  {"zimop",		1,  1},
+//  {"zca",		1,  2},
+//  {"zcb",		1,  3},
+//  {"zcd",		1,  4},
+//  {"zcf",		1,  5},
+//  {"zcmop",		1,  6},
+//  {"zawrs",		1,  7},
+//  {NULL,	       -1, -1}
+//};
+
+//struct riscv_feature_bits_internal { 
+//}
+
+//static bool
+//parse_feature_bits (const char *str, struct riscv_feature_bits *res)
+//{
+//  fprintf (stderr, "parse_feature_bits string is %s.\n", str);
+//  riscv_subset_list *subset_list;
+//
+//  if (strcmp (str, "default") == 0) {
+//    res->length = 0;
+//    res->features[1] = 0;
+//    res->features[0] = 0;
+//    return true;
+//  }
+//
+//  riscv_target_attr_parser attr_parser (UNKNOWN_LOCATION);
+//  if (!riscv_process_one_target_attr (str, UNKNOWN_LOCATION, attr_parser))
+//    return false; 
+//
+//  subset_list = attr_parser.get_subset_list;//riscv_subset_list::parse (str, UNKNOWN_LOCATION);
+//  
+//  if (!subset_list)
+//    return false;
+//
+//  res->length = RISCV_FEATURE_BITS_LENGTH;
+//  for (int i = 0; i < RISCV_FEATURE_BITS_LENGTH; ++i)
+//    res->features[i] = 0;
+//
+//  const struct riscv_ext_bitmask_table_t *ext_bitmask_tab;
+//  for (ext_bitmask_tab = &riscv_ext_bitmask_table[0];
+//       ext_bitmask_tab->ext;
+//       ++ext_bitmask_tab)
+//    {
+//      if (subset_list->lookup (ext_bitmask_tab->ext) == NULL)
+//	continue;
+//      
+//      res->features[ext_bitmask_tab->groupid]
+//	|= 1ULL << ext_bitmask_tab->bit_position;
+//    }
+//  
+//  return true;
+//}
+
+//static int
+//compare_feature_masks (struct riscv_feature_bits mask1,
+//		       struct riscv_feature_bits mask2)
+//{
+//  fprintf (stderr, "compare_feature_mask.\n");
+//  int pop1, pop2;
+//  int length1 = mask1.length, length2 = mask2.length;
+//  
+//  if (length1 > length2)
+//    return 1;
+//  else if (length1 < length2)
+//    return -1;
+//  else{
+//    //fprintf (stderr, "compare_feature_mask2.\n");
+//    pop1 = (popcount_hwi (mask1.features[length1 - 1]) * 64) + popcount_hwi (mask1.features[length1 - 2]);
+//    pop2 = (popcount_hwi (mask2.features[length2 - 1]) * 64) + popcount_hwi (mask2.features[length2 - 2]); 
+//    fprintf (stderr, "compare_feature_mask2 pop1 = %d, pop2 = %d.\n", pop1, pop2);
+//    if (pop1 > pop2)
+//      return 1;
+//    if (pop1 < pop2)
+//      return -1;
+//    //fprintf (stderr, "compare_feature_mask.\n"); 
+//    auto diff_mask_group1 = mask1.features[1] ^ mask2.features[1];
+//    auto diff_mask_group0 = mask1.features[0] ^ mask2.features[0];
+//    if (diff_mask_group1 == 0ULL && diff_mask_group0 == 0ULL)
+//      return 0;
+//    else
+//      return 1;
+//  }
+//}
+
+//static struct riscv_feature_bits
+//get_feature_mask_for_version (tree decl)
+//{
+//  fprintf (stderr, "get_feature_mask.\n");
+//  tree version_attr = lookup_attribute ("target_version",
+//					DECL_ATTRIBUTES (decl));
+//  struct riscv_feature_bits res;
+//  if (version_attr == NULL) {
+//    res.length = 0;
+//    res.features[0] = 0;
+//    res.features[1] = 0;
+//    return res;
+//  }
+//  fprintf (stderr, "get_feature_mask2.\n");
+//  const char *version_string = TREE_STRING_POINTER (TREE_VALUE (TREE_VALUE
+//						    (version_attr)));
+//  //struct riscv_feature_bits res;
+//  bool parse_res = parse_feature_bits (version_string, &res);
+//
+//  gcc_assert (parse_res == true);
+//
+//  return res; 
+//}
+
 /* Compare priorities of two version decls. Return:
      1: mask1 is higher priority
     -1: mask2 is higher priority
      0: masks are equal.  */
-int
-riscv_compare_version_priority (tree decl1, tree decl2)
-{
-  fprintf(stderr, "riscv_compare_version_priority\n");
-  gcc_unreachable ();
-  return 0;
-}
+//int
+//riscv_compare_version_priority (tree decl1, tree decl2)
+//{
+//  fprintf(stderr, "riscv_compare_version_priority\n");
+//  //gcc_unreachable ();
+//  struct riscv_feature_bits mask1 = get_feature_mask_for_version (decl1);
+//  struct riscv_feature_bits mask2 = get_feature_mask_for_version (decl2);
+//  
+//  return compare_feature_masks (mask1, mask2);
+//}
 
 
 /* This function returns true if FN1 and FN2 are versions of the same function,
    that is, the target_version attributes of the function decls are different.
    This assumes that FN1 and FN2 have the same signature.  */
 
-bool
-riscv_common_function_versions (tree fn1, tree fn2)
-{
-  if (TREE_CODE (fn1) != FUNCTION_DECL
-      || TREE_CODE (fn2) != FUNCTION_DECL)
-    return false;
-  
-  fprintf(stderr, "riscv_common_function_versions\n");
-
-  return false; // TODO: return (riscv_compare_version_priority (fn1, fn2) != 0);
-}
+//bool
+//riscv_common_function_versions (tree fn1, tree fn2)
+//{
+//  if (TREE_CODE (fn1) != FUNCTION_DECL
+//      || TREE_CODE (fn2) != FUNCTION_DECL)
+//    return false;
+//  
+//  fprintf(stderr, "riscv_common_function_versions\n");
+//
+//  //return false; // TODO: return (riscv_compare_version_priority (fn1, fn2) != 0);
+//  //return true;
+//  return (riscv_compare_version_priority (fn1, fn2) != 0);
+//}
 
 /* This adds a condition to the basic_block NEW_BB in function FUNCTION_DECL
    to return a pointer to VERSION_DECL if all feature bits specified in
@@ -12663,7 +12833,8 @@ dispatch_function_versions (tree dispatch_decl,
     {
       function_versions [actual_versions].version_decl = version_decl;
       // Get attribute string, parse it and find the right features.
-      tree version_attr = lookup_attribute ("target", DECL_ATTRIBUTES (version_decl));
+      //tree version_attr = lookup_attribute ("target", DECL_ATTRIBUTES (version_decl));
+      tree version_attr = lookup_attribute ("target_version", DECL_ATTRIBUTES (version_decl));
       gcc_assert (version_attr != NULL);
       const char *version_string = TREE_STRING_POINTER (TREE_VALUE
                                                         (TREE_VALUE
@@ -12857,9 +13028,17 @@ riscv_mangle_decl_assembler_name (tree decl, tree id)
       && DECL_FUNCTION_VERSIONED (decl))
     {
       std::string name = IDENTIFIER_POINTER (id) + std::string(".");
-      struct cl_target_option *target_opts = 
-        TREE_TARGET_OPTION (DECL_FUNCTION_SPECIFIC_TARGET (decl));
-      tree target_attr = lookup_attribute ("target", DECL_ATTRIBUTES (decl));
+      //struct cl_target_option *target_opts = 
+      //  TREE_TARGET_OPTION (DECL_FUNCTION_SPECIFIC_TARGET (decl));
+      //tree target_attr = lookup_attribute ("target", DECL_ATTRIBUTES (decl));
+      tree target_attr = lookup_attribute ("target_version", DECL_ATTRIBUTES (decl));
+      
+      /* Hank Add */
+      if (target_attr == NULL) {
+        name += "default";
+	return get_identifier (name.c_str ());
+      }
+        
       const char *version_string = TREE_STRING_POINTER (TREE_VALUE (TREE_VALUE
                                                         (target_attr)));
       for (const char *c = version_string; *c; c++)
