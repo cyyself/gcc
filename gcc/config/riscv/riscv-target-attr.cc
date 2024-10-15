@@ -99,6 +99,7 @@ riscv_target_attr_parser::parse_arch (const char *str)
     }
   else
     {
+      fprintf (stderr, "parse_arch: %s\n", str);
       /* Parsing the extension list like "+<ext>[,+<ext>]*".  */
       size_t len = strlen (str);
       std::unique_ptr<char[]> buf (new char[len+1]);
@@ -246,6 +247,7 @@ riscv_process_one_target_attr (char *arg_str,
 			       location_t loc,
 			       riscv_target_attr_parser &attr_parser)
 {
+  fprintf (stderr, "riscv_process_one_target_attr: %s\n", arg_str);
   size_t len = strlen (arg_str);
 
   if (len == 0)
@@ -309,6 +311,7 @@ num_occurrences_in_str (char c, char *str)
 
 bool
 riscv_process_target_attr (const char *args, location_t loc) {
+  fprintf (stderr, "riscv_process_target_attr: %s\n", args);
   size_t len = strlen (args);
 
   /* No need to emit warning or error on empty string here, generic code already
