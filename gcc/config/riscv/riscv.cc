@@ -7669,6 +7669,10 @@ riscv_compute_frame_info (void)
 static bool
 riscv_can_inline_p (tree caller, tree callee)
 {
+  /* Do not inline when callee is versioned but caller is not.  */
+  if (DECL_FUNCTION_VERSIONED (callee) && ! DECL_FUNCTION_VERSIONED (caller))
+    return false;
+
   tree callee_tree = DECL_FUNCTION_SPECIFIC_TARGET (callee);
   tree caller_tree = DECL_FUNCTION_SPECIFIC_TARGET (caller);
 
@@ -12577,6 +12581,93 @@ riscv_c_mode_for_floating_type (enum tree_index ti)
   return default_mode_for_floating_type (ti);
 }
 
+/* This parses the attribute arguments to target_version in DECL and the
+   feature mask required to select those targets.  */
+static struct riscv_feature_bits
+get_feature_mask_for_version (tree decl)
+{
+  struct riscv_feature_bits res;
+  /* DEBUG { */
+  struct cl_target_option *default_opts
+	= TREE_TARGET_OPTION (target_option_default_node);
+  /* DEBUG } */
+  tree version_attr = lookup_attribute ("target_version",
+                                        DECL_ATTRIBUTES (decl));
+  if (version_attr == NULL_TREE)
+    {
+      res.length = 0;
+      return res;
+    }
+ 
+  const char *version_string = TREE_STRING_POINTER (TREE_VALUE (TREE_VALUE
+                                                    (version_attr)));
+  gcc_assert (version_string != NULL);
+  fprintf(stderr, "get_feature_mask_for_version: version_string: %s\n", version_string);
+  if (strcmp (version_string, "default") == 0)
+    {
+      res.length = 0;
+      return res;
+    }
+  struct cl_target_option cur_target;
+  fprintf(stderr, "get_feature_mask_for_version: saved %d\n",
+          global_options.x_riscv_arch_string == default_opts->x_riscv_arch_string);
+  cl_target_option_save (&cur_target, &global_options,
+                         &global_options_set);
+  /* Always set to default option before parsing "arch=+..."  */
+  cl_target_option_restore (&global_options, &global_options_set,
+			    TREE_TARGET_OPTION (target_option_default_node));
+  riscv_process_target_attr(version_string,
+                            DECL_SOURCE_LOCATION (decl));
+  const char *arch_string = global_options.x_riscv_arch_string;
+  bool parse_res = riscv_minimal_hwprobe_feature_bits (arch_string, &res);
+  gcc_assert (parse_res);
+
+  if (arch_string != default_opts->x_riscv_arch_string)
+    free (CONST_CAST (void *, (const void *) arch_string));
+
+  cl_target_option_restore (&global_options, &global_options_set,
+                            &cur_target);
+  fprintf(stderr, "get_feature_mask_for_version: restored %d\n",
+          global_options.x_riscv_arch_string == default_opts->x_riscv_arch_string);
+  return res;
+}
+
+/* Compare priorities of two feature masks. Return:
+     1: mask1 is higher priority
+    -1: mask2 is higher priority
+     0: masks are equal.
+   Since riscv_feature_bits has total 128 bits to be used as mask, when counting
+   the total 1s in the mask, the 1s in group1 needs to multiply a weight.  */
+static int
+compare_feature_masks (const struct riscv_feature_bits &mask1,
+                       const struct riscv_feature_bits &mask2)
+{
+  unsigned length1 = mask1.length, length2 = mask2.length;
+  /* 1. Compare length, for length == 0 means default version, which should be
+        the lowest priority).  */
+  if (length1 != length2)
+    return length1 > length2 ? 1 : -1;
+  /* 2. Compare the total number of 1s in the mask.  */
+  unsigned pop1 = 0, pop2 = 0;
+  for (int i = 0; i < length1; i++)
+    {
+      pop1 += __builtin_popcountll (mask1.features[i]);
+      pop2 += __builtin_popcountll (mask2.features[i]);
+    }
+  if (pop1 != pop2)
+    return pop1 > pop2 ? 1 : -1;
+  /* 3. Compare the mask bit by bit order.  */
+  for (int i = 0; i < length1; i++)
+    {
+      unsigned long long xor_mask = mask1.features[i] ^ mask2.features[i];
+      if (xor_mask == 0)
+        continue;
+      return TEST_BIT(mask1.features[i], __builtin_ctzll (xor_mask)) ? 1 : -1;
+    }
+  /* 4. If all bits are equal, return 0.  */
+  return 0;
+}
+
 /* Compare priorities of two version decls. Return:
      1: mask1 is higher priority
     -1: mask2 is higher priority
@@ -12585,8 +12676,14 @@ int
 riscv_compare_version_priority (tree decl1, tree decl2)
 {
   fprintf(stderr, "riscv_compare_version_priority\n");
-  gcc_unreachable ();
-  return 0;
+  struct riscv_feature_bits mask1 = get_feature_mask_for_version (decl1);
+  struct riscv_feature_bits mask2 = get_feature_mask_for_version (decl2);
+
+  int res = compare_feature_masks (mask1, mask2);
+
+  fprintf(stderr, "riscv_compare_version_priority: %d\n", res);
+
+  return res;
 }
 
 
@@ -12600,10 +12697,14 @@ riscv_common_function_versions (tree fn1, tree fn2)
   if (TREE_CODE (fn1) != FUNCTION_DECL
       || TREE_CODE (fn2) != FUNCTION_DECL)
     return false;
-  
   fprintf(stderr, "riscv_common_function_versions\n");
 
-  return false; // TODO: return (riscv_compare_version_priority (fn1, fn2) != 0);
+  int res = riscv_compare_version_priority (fn1, fn2);
+
+  if (res == 0)
+    fprintf(stderr, "[WARN] riscv_common_function_versions: res == 0\n");
+
+  return res != 0;
 }
 
 /* This adds a condition to the basic_block NEW_BB in function FUNCTION_DECL
@@ -12613,7 +12714,6 @@ riscv_common_function_versions (tree fn1, tree fn2)
    the basic block at the end, to which more conditions can be added.  */
 static basic_block
 add_condition_to_bb (tree function_decl, tree version_decl,
-		     bool is_default,
 		     const struct riscv_feature_bits *features,
 		     tree mask_var, basic_block new_bb)
 {
@@ -12638,7 +12738,7 @@ add_condition_to_bb (tree function_decl, tree version_decl,
   convert_stmt = gimple_build_assign (result_var, convert_expr);
   return_stmt = gimple_build_return (result_var);
 
-  if (is_default)
+  if (features->length == 0)
     {
       /* Default version.  */
       gimple_seq_add_stmt (&gseq, convert_stmt);
@@ -12779,7 +12879,6 @@ dispatch_function_versions (tree dispatch_decl,
   struct function_version_info
     {
       tree version_decl;
-      bool is_default;
       int priority; /* reserved for future use */
       struct riscv_feature_bits features;
     } *function_versions;
@@ -12793,49 +12892,19 @@ dispatch_function_versions (tree dispatch_decl,
     {
       function_versions [actual_versions].version_decl = version_decl;
       // Get attribute string, parse it and find the right features.
-      tree version_attr = lookup_attribute ("target", DECL_ATTRIBUTES (version_decl));
-      gcc_assert (version_attr != NULL);
-      const char *version_string = TREE_STRING_POINTER (TREE_VALUE
-                                                        (TREE_VALUE
-                                                          (version_attr)));
-      fprintf(stderr, "version_string: %s\n", version_string);
-      if (strcmp (version_string, "default") == 0) {
-        function_versions [actual_versions].is_default = true;
-        /* Don't care features for default version.  */
-      }
-      else 
-      {
-        function_versions [actual_versions].is_default = false;
-        struct cl_target_option cur_target;
-        cl_target_option_save (&cur_target, &global_options,
-                                &global_options_set);
-        riscv_process_target_attr(version_string,
-                                  DECL_SOURCE_LOCATION (version_decl));
-        riscv_minimal_hwprobe_feature_bits
-          (global_options.x_riscv_arch_string,
-            &function_versions[actual_versions].features);
-        cl_target_option_restore (&global_options, &global_options_set,
-                                  &cur_target);
-      }
+      function_versions [actual_versions].priority = 0;
+      function_versions [actual_versions].features
+        = get_feature_mask_for_version (version_decl);
       actual_versions++;
     }
   
 
   auto compare_feature_version_info = [](const void *p1, const void *p2) {
-    // TODO: fix here
     const function_version_info v1 = *(const function_version_info *)p1;
     const function_version_info v2 = *(const function_version_info *)p2;
-    if (v1.is_default != v2.is_default)
-      return v1.is_default ? 1 : -1;
     if (v1.priority != v2.priority)
       return v1.priority - v2.priority;
-    /* If the priority is the same, sort by the number of feature bits set.  */
-    int popcount1 = 0, popcount2 = 0;
-    for (int i = 0; i < RISCV_FEATURE_BITS_LENGTH; i++)
-      popcount1 += __builtin_popcountll (v1.features.features[i]);
-    for (int i = 0; i < RISCV_FEATURE_BITS_LENGTH; i++)
-      popcount2 += __builtin_popcountll (v2.features.features[i]);
-    return popcount1 - popcount2;
+    return - compare_feature_masks (v1.features, v2.features);
   };
 
   /* Sort the versions according to descending order of dispatch priority.  */
@@ -12846,7 +12915,6 @@ dispatch_function_versions (tree dispatch_decl,
     {
       *empty_bb = add_condition_to_bb (dispatch_decl,
                                       function_versions[i].version_decl,
-                                      function_versions[i].is_default,
                                       &function_versions[i].features,
                                       mask_var,
                                       *empty_bb);
@@ -12865,6 +12933,8 @@ get_suffixed_assembler_name (tree default_decl, const char *suffix)
 {
   fprintf(stderr, "get_suffixed_assembler_name\n");
   std::string name = IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (default_decl));
+
+  fprintf(stderr, "get_suffixed_assembler_name: init %s\n", name.c_str());
 
   auto size = name.size ();
   if (size >= 8 && name.compare (size - 8, 8, ".default") == 0)
@@ -12989,12 +13059,13 @@ riscv_mangle_decl_assembler_name (tree decl, tree id)
       std::string name = IDENTIFIER_POINTER (id) + std::string(".");
       struct cl_target_option *target_opts = 
         TREE_TARGET_OPTION (DECL_FUNCTION_SPECIFIC_TARGET (decl));
-      tree target_attr = lookup_attribute ("target", DECL_ATTRIBUTES (decl));
+      tree target_attr = lookup_attribute ("target_version", DECL_ATTRIBUTES (decl));
+
       const char *version_string = TREE_STRING_POINTER (TREE_VALUE (TREE_VALUE
                                                         (target_attr)));
       for (const char *c = version_string; *c; c++)
         name += ISALNUM(*c) == 0 ? '_' : *c;
-      fprintf(stderr, "riscv_mangle_decl_assembler_name: %s %s\n", name.c_str(), version_string);
+      fprintf (stderr, "riscv_mangle_decl_assembler_name: %s %s\n", name.c_str(), version_string);
       return get_identifier (name.c_str ());
     }
 
@@ -13118,16 +13189,15 @@ riscv_get_function_versions_dispatcher (void *decl)
   while (first_v->prev != NULL)
     first_v = first_v->prev;
   default_version_info = first_v;
-  /*
+
   while (default_version_info != NULL)
     {
-      if (get_feature_mask_for_version
-	    (default_version_info->this_node->decl) == 0ULL)
+      struct riscv_feature_bits res
+        = get_feature_mask_for_version(default_version_info->this_node->decl);
+      if (res.length == 0)
 	break;
       default_version_info = default_version_info->next;
     }
-    // TODO: Here
-   */
 
   /* If there is no default node, just return NULL.  */
   if (default_version_info == NULL)
@@ -13342,9 +13412,6 @@ riscv_stack_clash_protection_alloca_probe_range (void)
 
 #undef TARGET_LEGITIMATE_ADDRESS_P
 #define TARGET_LEGITIMATE_ADDRESS_P	riscv_legitimate_address_p
-
-#undef TARGET_OPTION_FUNCTION_VERSIONS
-#define TARGET_OPTION_FUNCTION_VERSIONS common_function_versions
 
 #undef TARGET_CAN_INLINE_P
 #define TARGET_CAN_INLINE_P riscv_can_inline_p

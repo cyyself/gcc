@@ -30,6 +30,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "diagnostic.h"
 #include "opts.h"
 #include "riscv-subset.h"
+#include "stringpool.h"
+#include "attribs.h"
 
 namespace {
 class riscv_target_attr_parser
@@ -218,10 +220,6 @@ riscv_target_attr_parser::update_settings (struct gcc_options *opts) const
     {
       std::string local_arch = m_subset_list->to_string (true);
       const char* local_arch_str = local_arch.c_str ();
-      struct cl_target_option *default_opts
-	= TREE_TARGET_OPTION (target_option_default_node);
-      if (opts->x_riscv_arch_string != default_opts->x_riscv_arch_string)
-	free (CONST_CAST (void *, (const void *) opts->x_riscv_arch_string));
       opts->x_riscv_arch_string = xstrdup (local_arch_str);
 
       riscv_set_arch_by_subset_list (m_subset_list, opts);
@@ -243,7 +241,7 @@ riscv_target_attr_parser::update_settings (struct gcc_options *opts) const
    Show appropriate errors if any or return true if the attribute is valid.  */
 
 static bool
-riscv_process_one_target_attr (char *arg_str,
+riscv_process_one_target_attr (const char *arg_str,
 			       location_t loc,
 			       riscv_target_attr_parser &attr_parser)
 {
@@ -410,12 +408,16 @@ riscv_option_valid_attribute_p (tree fndecl, tree, tree args, int)
      overwriting them.  */
   if (existing_target)
     {
+      fprintf(stderr, "existing_target: %p\n", existing_target);
       struct cl_target_option *existing_options
 	= TREE_TARGET_OPTION (existing_target);
 
       if (existing_options)
-	cl_target_option_restore (&global_options, &global_options_set,
-				  existing_options);
+        {
+	  cl_target_option_restore (&global_options, &global_options_set,
+				    existing_options);
+          fprintf(stderr, "riscv_option_valid_attribute_p: restored existing_options\n");
+        }
     }
   else
     cl_target_option_restore (&global_options, &global_options_set,
@@ -423,8 +425,6 @@ riscv_option_valid_attribute_p (tree fndecl, tree, tree args, int)
 
   /* Now we can parse the attributes and set &global_options accordingly.  */
   ret = riscv_process_target_attr (args, loc);
-  /*
-  // TODO: here we add target_version parser like aarch64
   if (ret)
     {
       tree version_attr = lookup_attribute ("target_version",
@@ -435,10 +435,13 @@ riscv_option_valid_attribute_p (tree fndecl, tree, tree args, int)
 	  // This should be equivalent to applying the target_version once
 	  // after processing all target attributes.
 	  tree version_args = TREE_VALUE (version_attr);
-	  ret = aarch64_process_target_version_attr (version_args);
+          fprintf(stderr, "riscv_option_valid_attribute_p: %s\n", "version_attr");
 	}
+      else
+        {
+          fprintf(stderr, "riscv_option_valid_attribute_p: NULL\n");
+        }
     }
-   */
   if (ret)
     {
       riscv_override_options_internal (&global_options);
@@ -452,13 +455,99 @@ riscv_option_valid_attribute_p (tree fndecl, tree, tree args, int)
   return ret;
 }
 
+/* Parse the tree in ARGS that contains the target_version attribute
+   information and update the global target options space.  */
+
+static bool
+riscv_process_target_version_attr (tree args, location_t loc)
+{
+  if (TREE_CODE (args) == TREE_LIST)
+    {
+      if (TREE_CHAIN (args))
+        {
+          error ("attribute %<target_version%> has multiple values");
+          return false;
+        }
+      args = TREE_VALUE (args);
+    }
+
+  if (!args || TREE_CODE (args) != STRING_CST)
+    {
+      error ("attribute %<target_version%> argument not a string");
+      return false;
+    }
+
+  const char *str = TREE_STRING_POINTER (args);
+  if (strcmp (str, "default") == 0)
+    return true;
+
+  riscv_target_attr_parser attr_parser (loc);
+  if (!riscv_process_one_target_attr (str, loc, attr_parser))
+    return false;
+
+  attr_parser.update_settings (&global_options);
+  return true;
+}
+
+
 /* Implement TARGET_OPTION_VALID_VERSION_ATTRIBUTE_P.  This is used to
    process attribute ((target_version ("..."))).  */
 
 bool
 riscv_option_valid_version_attribute_p (tree fndecl, tree, tree args, int)
 {
-  fprintf(stderr, "Unimplemented riscv_option_valid_version_attribute_p\n");
-  gcc_unreachable (); // TODO
-  return false;
+  struct cl_target_option cur_target;
+  bool ret;
+  tree new_target;
+  tree existing_target = DECL_FUNCTION_SPECIFIC_TARGET (fndecl);
+  location_t loc = DECL_SOURCE_LOCATION (fndecl);
+
+  /* Save the current target options to restore at the end.  */
+  fprintf(stderr, "riscv_option_valid_version_attribute_p: saved\n");
+  cl_target_option_save (&cur_target, &global_options, &global_options_set);
+
+  /* If fndecl already has some target attributes applied to it, unpack
+     them so that we add this attribute on top of them, rather than
+     overwriting them.  */
+  if (existing_target)
+    {
+      struct cl_target_option *existing_options
+	= TREE_TARGET_OPTION (existing_target);
+
+      if (existing_options)
+	cl_target_option_restore (&global_options, &global_options_set,
+				  existing_options);
+    }
+  else
+    cl_target_option_restore (&global_options, &global_options_set,
+			      TREE_TARGET_OPTION (target_option_current_node));
+
+  ret = riscv_process_target_version_attr (args, loc);
+
+  /* Set up any additional state.  */
+  if (ret)
+    {
+      riscv_override_options_internal (&global_options);
+      new_target = build_target_option_node (&global_options,
+					     &global_options_set);
+    }
+  else
+    {
+      new_target = NULL;
+      fprintf(stderr , "riscv_option_valid_version_attribute_p: failed to process target_version\n");
+    }
+
+  if (fndecl && ret) {
+      DECL_FUNCTION_SPECIFIC_TARGET (fndecl) = new_target;
+      fprintf(stderr, "riscv_option_valid_version_attribute_p: set %p to %p\n", fndecl, new_target);
+  }
+  else
+    {
+      fprintf(stderr , "riscv_option_valid_version_attribute_p: NOT_SET\n");
+    }
+
+  cl_target_option_restore (&global_options, &global_options_set, &cur_target);
+  fprintf(stderr, "riscv_option_valid_version_attribute_p: restored\n");
+
+  return ret;
 }
