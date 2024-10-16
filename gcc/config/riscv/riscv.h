@@ -1260,6 +1260,9 @@ extern void riscv_remove_unneeded_save_restore_calls (void);
 #define HAVE_POST_MODIFY_DISP TARGET_XTHEADMEMIDX
 #define HAVE_PRE_MODIFY_DISP  TARGET_XTHEADMEMIDX
 
+/* Hank Add */
+#define TARGET_HAS_FMV_TARGET_ATTRIBUTE 0
+
 /* Check TLS Descriptors mechanism is selected.  */
 #define TARGET_TLSDESC (riscv_tls_dialect == TLS_DESCRIPTORS)
 
