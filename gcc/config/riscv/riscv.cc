@@ -12586,10 +12586,6 @@ riscv_c_mode_for_floating_type (enum tree_index ti)
 static void
 parse_features_for_version (tree decl, struct riscv_feature_bits &res, int &priority)
 {
-  /* DEBUG { */
-  struct cl_target_option *default_opts
-	= TREE_TARGET_OPTION (target_option_default_node);
-  /* DEBUG } */
   tree version_attr = lookup_attribute ("target_version",
                                         DECL_ATTRIBUTES (decl));
   if (version_attr == NULL_TREE)
@@ -12602,7 +12598,6 @@ parse_features_for_version (tree decl, struct riscv_feature_bits &res, int &prio
   const char *version_string = TREE_STRING_POINTER (TREE_VALUE (TREE_VALUE
                                                     (version_attr)));
   gcc_assert (version_string != NULL);
-  fprintf(stderr, "get_feature_mask_for_version: version_string: %s\n", version_string);
   if (strcmp (version_string, "default") == 0)
     {
       res.length = 0;
@@ -12610,15 +12605,14 @@ parse_features_for_version (tree decl, struct riscv_feature_bits &res, int &prio
       return;
     }
   struct cl_target_option cur_target;
-  fprintf(stderr, "get_feature_mask_for_version: saved %d\n",
-          global_options.x_riscv_arch_string == default_opts->x_riscv_arch_string);
   cl_target_option_save (&cur_target, &global_options,
                          &global_options_set);
-  fprintf(stderr, "priority before: %d\n", global_options.x_riscv_fmv_priority);
   /* Always set to default option before parsing "arch=+..."  */
+  struct cl_target_option *default_opts
+	= TREE_TARGET_OPTION (target_option_default_node);
   cl_target_option_restore (&global_options, &global_options_set,
-			    TREE_TARGET_OPTION (target_option_default_node));
-  fprintf(stderr, "priority after: %d\n", global_options.x_riscv_fmv_priority);
+                            default_opts);
+
   riscv_process_target_attr(version_string,
                             DECL_SOURCE_LOCATION (decl));
 
@@ -12632,8 +12626,6 @@ parse_features_for_version (tree decl, struct riscv_feature_bits &res, int &prio
 
   cl_target_option_restore (&global_options, &global_options_set,
                             &cur_target);
-  fprintf(stderr, "get_feature_mask_for_version: restored %d\n",
-          global_options.x_riscv_arch_string == default_opts->x_riscv_arch_string);
 }
 
 /* Compare priorities of two feature masks. Return:
@@ -12654,7 +12646,6 @@ compare_fmv_features (const struct riscv_feature_bits &mask1,
     return length1 > length2 ? 1 : -1;
   /* 2. Compare the priority.  */
   if (prio1 != prio2) {
-    fprintf(stderr, "[WARN] prio not equal %d %d\n", prio1, prio2);
     return prio1 > prio2 ? 1 : -1;
   }
   /* 3. Compare the total number of 1s in the mask.  */
@@ -12705,14 +12696,8 @@ riscv_common_function_versions (tree fn1, tree fn2)
   if (TREE_CODE (fn1) != FUNCTION_DECL
       || TREE_CODE (fn2) != FUNCTION_DECL)
     return false;
-  fprintf(stderr, "riscv_common_function_versions\n");
 
-  int res = riscv_compare_version_priority (fn1, fn2);
-
-  if (res == 0)
-    fprintf(stderr, "[WARN] riscv_common_function_versions: res == 0\n");
-
-  return res != 0;
+  return riscv_compare_version_priority (fn1, fn2) != 0;
 }
 
 /* This adds a condition to the basic_block NEW_BB in function FUNCTION_DECL
@@ -12849,7 +12834,6 @@ dispatch_function_versions (tree dispatch_decl,
 			    void *fndecls_p,
 			    basic_block *empty_bb)
 {
-  fprintf(stderr, "dispatch_function_versions\n");
   gimple *ifunc_cpu_init_stmt;
   gimple_seq gseq;
   vec<tree> *fndecls;
@@ -12936,9 +12920,7 @@ dispatch_function_versions (tree dispatch_decl,
 
   /* At least one more version other than the default.  */
   unsigned int num_versions = fndecls->length ();
-  bool ok = (num_versions >= 2);
-  fprintf(stderr, "num_versions: %d %d\n", num_versions, ok ? 1 : 0);
-  gcc_assert (ok);
+  gcc_assert (num_versions >= 2);
 
   struct function_version_info
     {
@@ -12993,16 +12975,12 @@ dispatch_function_versions (tree dispatch_decl,
 static tree
 get_suffixed_assembler_name (tree default_decl, const char *suffix)
 {
-  fprintf(stderr, "get_suffixed_assembler_name\n");
   std::string name = IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (default_decl));
-
-  fprintf(stderr, "get_suffixed_assembler_name: init %s\n", name.c_str());
 
   auto size = name.size ();
   if (size >= 8 && name.compare (size - 8, 8, ".default") == 0)
     name.resize (size - 8);
   name += suffix;
-  fprintf(stderr, "get_suffixed_assembler_name: %s\n", name.c_str());
   return get_identifier (name.c_str());
 }
 
@@ -13017,7 +12995,6 @@ make_resolver_func (const tree default_decl,
 		    const tree ifunc_alias_decl,
 		    basic_block *empty_bb)
 {
-  fprintf(stderr, "make_resolver_func\n");
   tree decl, type, t;
 
   /* Create resolver function name based on default_decl.  We need to remove an
@@ -13148,7 +13125,6 @@ riscv_mangle_decl_assembler_name (tree decl, tree id)
 tree
 riscv_generate_version_dispatcher_body (void *node_p)
 {
-  fprintf(stderr, "riscv_generate_version_dispatcher_body\n");
   tree resolver_decl;
   basic_block empty_bb;
   tree default_ver_decl;
@@ -13232,7 +13208,6 @@ riscv_generate_version_dispatcher_body (void *node_p)
 tree
 riscv_get_function_versions_dispatcher (void *decl)
 {
-  fprintf(stderr, "riscv_get_function_versions_dispatcher\n");
   tree fn = (tree) decl;
   struct cgraph_node *node = NULL;
   struct cgraph_node *default_node = NULL;

@@ -106,7 +106,6 @@ riscv_target_attr_parser::parse_arch (const char *str)
     }
   else
     {
-      fprintf (stderr, "parse_arch: %s\n", str);
       /* Parsing the extension list like "+<ext>[,+<ext>]*".  */
       size_t len = strlen (str);
       std::unique_ptr<char[]> buf (new char[len+1]);
@@ -269,7 +268,6 @@ riscv_process_one_target_attr (const char *arg_str,
 			       location_t loc,
 			       riscv_target_attr_parser &attr_parser)
 {
-  fprintf (stderr, "riscv_process_one_target_attr: %s\n", arg_str);
   size_t len = strlen (arg_str);
 
   if (len == 0)
@@ -339,7 +337,6 @@ num_occurrences_in_str (char c, char *str)
 
 bool
 riscv_process_target_attr (const char *args, location_t loc) {
-  fprintf (stderr, "riscv_process_target_attr: %s\n", args);
   size_t len = strlen (args);
 
   /* No need to emit warning or error on empty string here, generic code already
@@ -443,7 +440,6 @@ riscv_option_valid_attribute_p (tree fndecl, tree, tree args, int)
      overwriting them.  */
   if (existing_target)
     {
-      fprintf(stderr, "existing_target: %p\n", existing_target);
       struct cl_target_option *existing_options
 	= TREE_TARGET_OPTION (existing_target);
 
@@ -451,7 +447,6 @@ riscv_option_valid_attribute_p (tree fndecl, tree, tree args, int)
         {
 	  cl_target_option_restore (&global_options, &global_options_set,
 				    existing_options);
-          fprintf(stderr, "riscv_option_valid_attribute_p: restored existing_options\n");
         }
     }
   else
@@ -472,12 +467,7 @@ riscv_option_valid_attribute_p (tree fndecl, tree, tree args, int)
 	  tree version_args = TREE_VALUE (version_attr);
 	  riscv_process_target_attr (version_args,
 				     DECL_SOURCE_LOCATION (fndecl));
-          fprintf(stderr, "riscv_option_valid_attribute_p: %s\n", "version_attr");
 	}
-      else
-        {
-          fprintf(stderr, "riscv_option_valid_attribute_p: NULL\n");
-        }
     }
   if (ret)
     {
@@ -540,7 +530,6 @@ riscv_option_valid_version_attribute_p (tree fndecl, tree, tree args, int)
   location_t loc = DECL_SOURCE_LOCATION (fndecl);
 
   /* Save the current target options to restore at the end.  */
-  fprintf(stderr, "riscv_option_valid_version_attribute_p: saved\n");
   cl_target_option_save (&cur_target, &global_options, &global_options_set);
 
   /* If fndecl already has some target attributes applied to it, unpack
@@ -569,22 +558,12 @@ riscv_option_valid_version_attribute_p (tree fndecl, tree, tree args, int)
 					     &global_options_set);
     }
   else
-    {
-      new_target = NULL;
-      fprintf(stderr , "riscv_option_valid_version_attribute_p: failed to process target_version\n");
-    }
+    new_target = NULL;
 
-  if (fndecl && ret) {
-      DECL_FUNCTION_SPECIFIC_TARGET (fndecl) = new_target;
-      fprintf(stderr, "riscv_option_valid_version_attribute_p: set %p to %p\n", fndecl, new_target);
-  }
-  else
-    {
-      fprintf(stderr , "riscv_option_valid_version_attribute_p: NOT_SET\n");
-    }
+  if (fndecl && ret)
+    DECL_FUNCTION_SPECIFIC_TARGET (fndecl) = new_target;
 
   cl_target_option_restore (&global_options, &global_options_set, &cur_target);
-  fprintf(stderr, "riscv_option_valid_version_attribute_p: restored\n");
 
   return ret;
 }
