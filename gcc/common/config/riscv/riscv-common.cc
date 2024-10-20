@@ -1907,10 +1907,11 @@ riscv_x_target_flags_isa_mask (void)
 
 bool
 riscv_minimal_hwprobe_feature_bits (const char *isa,
-				    struct riscv_feature_bits *res)
+				    struct riscv_feature_bits *res,
+                                    location_t loc)
 {
   riscv_subset_list *subset_list;
-  subset_list = riscv_subset_list::parse (isa, UNKNOWN_LOCATION);
+  subset_list = riscv_subset_list::parse (isa, loc);
   if (!subset_list)
     return false;
 

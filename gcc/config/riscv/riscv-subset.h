@@ -123,7 +123,8 @@ extern const riscv_subset_list *riscv_cmdline_subset_list (void);
 extern void
 riscv_set_arch_by_subset_list (riscv_subset_list *, struct gcc_options *);
 extern bool riscv_minimal_hwprobe_feature_bits (const char *,
-						struct riscv_feature_bits *);
+						struct riscv_feature_bits *,
+						location_t);
 extern bool
 riscv_ext_is_subset (struct cl_target_option *, struct cl_target_option *);
 extern int riscv_x_target_flags_isa_mask (void);

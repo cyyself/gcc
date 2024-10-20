@@ -12618,7 +12618,9 @@ parse_features_for_version (tree decl, struct riscv_feature_bits &res, int &prio
 
   priority = global_options.x_riscv_fmv_priority;
   const char *arch_string = global_options.x_riscv_arch_string;
-  bool parse_res = riscv_minimal_hwprobe_feature_bits (arch_string, &res);
+  bool parse_res
+    = riscv_minimal_hwprobe_feature_bits (arch_string, &res,
+                                          DECL_SOURCE_LOCATION (decl));
   gcc_assert (parse_res);
 
   if (arch_string != default_opts->x_riscv_arch_string)
