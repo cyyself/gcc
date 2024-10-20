@@ -349,6 +349,11 @@ riscv_process_target_attr (const char *args, location_t loc) {
       return false;
     }
 
+  if (strcmp(args, "default") == 0)
+    {
+      return true;
+    }
+
   std::unique_ptr<char[]> buf (new char[len+1]);
   char *str_to_check = buf.get ();
   strcpy (str_to_check, args);

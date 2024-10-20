@@ -13119,16 +13119,25 @@ riscv_mangle_decl_assembler_name (tree decl, tree id)
       && DECL_FUNCTION_VERSIONED (decl))
     {
       std::string name = IDENTIFIER_POINTER (id) + std::string(".");
-      struct cl_target_option *target_opts = 
-        TREE_TARGET_OPTION (DECL_FUNCTION_SPECIFIC_TARGET (decl));
       tree target_attr = lookup_attribute ("target_version", DECL_ATTRIBUTES (decl));
+
+      if (target_attr == NULL_TREE)
+        {
+          name += "default";
+          return get_identifier (name.c_str ());
+        }
 
       const char *version_string = TREE_STRING_POINTER (TREE_VALUE (TREE_VALUE
                                                         (target_attr)));
+
+      /* Replace non-alphanumeric characters with underscores as the suffix.  */
       for (const char *c = version_string; *c; c++)
         name += ISALNUM(*c) == 0 ? '_' : *c;
-      fprintf (stderr, "riscv_mangle_decl_assembler_name: %s %s\n", name.c_str(), version_string);
-      return get_identifier (name.c_str ());
+
+      if (DECL_ASSEMBLER_NAME_SET_P(decl))
+        SET_DECL_RTL (decl, NULL);
+
+      id = get_identifier (name.c_str ());
     }
 
   return id;
