@@ -12584,19 +12584,21 @@ riscv_c_mode_for_floating_type (enum tree_index ti)
 /* This parses the attribute arguments to target_version in DECL and modifies
    the feature mask and priority required to select those targets.  */
 static void
-parse_features_for_version (tree decl, struct riscv_feature_bits &res, int &priority)
+parse_features_for_version (tree decl,
+			    struct riscv_feature_bits &res,
+			    int &priority)
 {
   tree version_attr = lookup_attribute ("target_version",
-                                        DECL_ATTRIBUTES (decl));
+					DECL_ATTRIBUTES (decl));
   if (version_attr == NULL_TREE)
     {
       res.length = 0;
       priority = 0;
       return;
     }
- 
+
   const char *version_string = TREE_STRING_POINTER (TREE_VALUE (TREE_VALUE
-                                                    (version_attr)));
+						    (version_attr)));
   gcc_assert (version_string != NULL);
   if (strcmp (version_string, "default") == 0)
     {
@@ -12606,31 +12608,31 @@ parse_features_for_version (tree decl, struct riscv_feature_bits &res, int &prio
     }
   struct cl_target_option cur_target;
   cl_target_option_save (&cur_target, &global_options,
-                         &global_options_set);
+			 &global_options_set);
   /* Always set to default option before parsing "arch=+..."  */
   struct cl_target_option *default_opts
 	= TREE_TARGET_OPTION (target_option_default_node);
   cl_target_option_restore (&global_options, &global_options_set,
-                            default_opts);
+			    default_opts);
 
-  riscv_process_target_attr(version_string,
-                            DECL_SOURCE_LOCATION (decl));
+  riscv_process_target_attr (version_string,
+			     DECL_SOURCE_LOCATION (decl));
 
   priority = global_options.x_riscv_fmv_priority;
   const char *arch_string = global_options.x_riscv_arch_string;
   bool parse_res
     = riscv_minimal_hwprobe_feature_bits (arch_string, &res,
-                                          DECL_SOURCE_LOCATION (decl));
+					  DECL_SOURCE_LOCATION (decl));
   gcc_assert (parse_res);
 
   if (arch_string != default_opts->x_riscv_arch_string)
     free (CONST_CAST (void *, (const void *) arch_string));
 
   cl_target_option_restore (&global_options, &global_options_set,
-                            &cur_target);
+			    &cur_target);
 }
 
-/* Compare priorities of two feature masks. Return:
+/* Compare priorities of two feature masks.  Return:
      1: mask1 is higher priority
     -1: mask2 is higher priority
      0: masks are equal.
@@ -12638,19 +12640,18 @@ parse_features_for_version (tree decl, struct riscv_feature_bits &res, int &prio
    the total 1s in the mask, the 1s in group1 needs to multiply a weight.  */
 static int
 compare_fmv_features (const struct riscv_feature_bits &mask1,
-                      const struct riscv_feature_bits &mask2,
-                      int prio1, int prio2)
+		      const struct riscv_feature_bits &mask2,
+		      int prio1, int prio2)
 {
   unsigned length1 = mask1.length, length2 = mask2.length;
-  /* 1. Compare length, for length == 0 means default version, which should be
-        the lowest priority).  */
+  /* 1.  Compare length, for length == 0 means default version, which should be
+	 the lowest priority).  */
   if (length1 != length2)
     return length1 > length2 ? 1 : -1;
-  /* 2. Compare the priority.  */
-  if (prio1 != prio2) {
+  /* 2.  Compare the priority.  */
+  if (prio1 != prio2)
     return prio1 > prio2 ? 1 : -1;
-  }
-  /* 3. Compare the total number of 1s in the mask.  */
+  /* 3.  Compare the total number of 1s in the mask.  */
   unsigned pop1 = 0, pop2 = 0;
   for (int i = 0; i < length1; i++)
     {
@@ -12659,19 +12660,19 @@ compare_fmv_features (const struct riscv_feature_bits &mask1,
     }
   if (pop1 != pop2)
     return pop1 > pop2 ? 1 : -1;
-  /* 4. Compare the mask bit by bit order.  */
+  /* 4.  Compare the mask bit by bit order.  */
   for (int i = 0; i < length1; i++)
     {
       unsigned long long xor_mask = mask1.features[i] ^ mask2.features[i];
       if (xor_mask == 0)
-        continue;
-      return TEST_BIT(mask1.features[i], __builtin_ctzll (xor_mask)) ? 1 : -1;
+	continue;
+      return TEST_BIT (mask1.features[i], __builtin_ctzll (xor_mask)) ? 1 : -1;
     }
-  /* 5. If all bits are equal, return 0.  */
+  /* 5.  If all bits are equal, return 0.  */
   return 0;
 }
 
-/* Compare priorities of two version decls. Return:
+/* Compare priorities of two version decls.  Return:
      1: mask1 is higher priority
     -1: mask2 is higher priority
      0: masks are equal.  */
@@ -12751,7 +12752,7 @@ add_condition_to_bb (tree function_decl, tree version_decl,
   tree and_expr_var = create_tmp_var (long_long_unsigned_type_node);
   tree eq_expr_var = create_tmp_var (boolean_type_node);
 
-  /* cond_status = true */
+  /* cond_status = true.  */
   gimple *cond_init_stmt = gimple_build_assign (cond_status, boolean_true_node);
   gimple_set_block (cond_init_stmt, DECL_INITIAL (function_decl));
   gimple_set_bb (cond_init_stmt, new_bb);
@@ -12762,9 +12763,10 @@ add_condition_to_bb (tree function_decl, tree version_decl,
       tree index_expr = build_int_cst (unsigned_type_node, i);
       /* mask_array_ele_var = mask_var[i] */
       tree mask_array_ref = build4 (ARRAY_REF, long_long_unsigned_type_node,
-                                    mask_var, index_expr, NULL_TREE, NULL_TREE);
-      
-      gimple *mask_stmt = gimple_build_assign (mask_array_ele_var, mask_array_ref);
+				    mask_var, index_expr, NULL_TREE, NULL_TREE);
+
+      gimple *mask_stmt = gimple_build_assign (mask_array_ele_var,
+					       mask_array_ref);
       gimple_set_block (mask_stmt, DECL_INITIAL (function_decl));
       gimple_set_bb (mask_stmt, new_bb);
       gimple_seq_add_stmt (&gseq, mask_stmt);
@@ -12778,16 +12780,16 @@ add_condition_to_bb (tree function_decl, tree version_decl,
       gimple_set_block (and_stmt, DECL_INITIAL (function_decl));
       gimple_set_bb (and_stmt, new_bb);
       gimple_seq_add_stmt (&gseq, and_stmt);
-      /* eq_expr_var = and_expr_var == 0 */
+      /* eq_expr_var = and_expr_var == 0.  */
       tree eq_expr = build2 (EQ_EXPR, boolean_type_node,
-                             and_expr_var, zero_llu);
+			     and_expr_var, zero_llu);
       gimple *eq_stmt = gimple_build_assign (eq_expr_var, eq_expr);
       gimple_set_block (eq_stmt, DECL_INITIAL (function_decl));
       gimple_set_bb (eq_stmt, new_bb);
       gimple_seq_add_stmt (&gseq, eq_stmt);
-      /* cond_status = cond_status & eq_expr_var */
+      /* cond_status = cond_status & eq_expr_var.  */
       tree cond_expr = build2 (BIT_AND_EXPR, boolean_type_node,
-                               cond_status, eq_expr_var);
+			       cond_status, eq_expr_var);
       gimple *cond_stmt = gimple_build_assign (cond_status, cond_expr);
       gimple_set_block (cond_stmt, DECL_INITIAL (function_decl));
       gimple_set_bb (cond_stmt, new_bb);
@@ -12863,13 +12865,13 @@ dispatch_function_versions (tree dispatch_decl,
   /* Build the struct type for __riscv_feature_bits.  */
   tree global_type = lang_hooks.types.make_type (RECORD_TYPE);
   tree features_type = build_array_type_nelts (long_long_unsigned_type_node,
-                                               RISCV_FEATURE_BITS_LENGTH);
+					       RISCV_FEATURE_BITS_LENGTH);
   tree field1 = build_decl (UNKNOWN_LOCATION, FIELD_DECL,
 			    get_identifier ("length"),
 			    unsigned_type_node);
   tree field2 = build_decl (UNKNOWN_LOCATION, FIELD_DECL,
-                            get_identifier ("features"),
-                            features_type);
+			    get_identifier ("features"),
+			    features_type);
   DECL_FIELD_CONTEXT (field1) = global_type;
   DECL_FIELD_CONTEXT (field2) = global_type;
   TYPE_FIELDS (global_type) = field1;
@@ -12892,22 +12894,25 @@ dispatch_function_versions (tree dispatch_decl,
       tree component_expr = build3 (COMPONENT_REF, features_type,
 				    global_var, field2, NULL_TREE);
       tree feature_array_ref = build4 (ARRAY_REF, long_long_unsigned_type_node,
-                                       component_expr, index_expr, NULL_TREE, NULL_TREE);
-      gimple *feature_stmt = gimple_build_assign (feature_ele_var, feature_array_ref);
+				       component_expr, index_expr,
+				       NULL_TREE, NULL_TREE);
+      gimple *feature_stmt = gimple_build_assign (feature_ele_var,
+						  feature_array_ref);
       gimple_set_block (feature_stmt, DECL_INITIAL (dispatch_decl));
       gimple_set_bb (feature_stmt, *empty_bb);
       gimple_seq_add_stmt (&gseq, feature_stmt);
-      /* noted_var = ~feature_ele_var */
+      /* noted_var = ~feature_ele_var.  */
       tree not_expr = build1 (BIT_NOT_EXPR, long_long_unsigned_type_node,
-                              feature_ele_var);
+			      feature_ele_var);
       gimple *not_stmt = gimple_build_assign (noted_var, not_expr);
       gimple_set_block (not_stmt, DECL_INITIAL (dispatch_decl));
       gimple_set_bb (not_stmt, *empty_bb);
       gimple_seq_add_stmt (&gseq, not_stmt);
-      /* mask_var[i] = ~feature_ele_var */
+      /* mask_var[i] = ~feature_ele_var.  */
       tree mask_array_ref = build4 (ARRAY_REF, long_long_unsigned_type_node,
-                                    mask_var, index_expr, NULL_TREE, NULL_TREE);
-      gimple *mask_assign_stmt = gimple_build_assign (mask_array_ref, noted_var);
+				    mask_var, index_expr, NULL_TREE, NULL_TREE);
+      gimple *mask_assign_stmt = gimple_build_assign (mask_array_ref,
+						      noted_var);
       gimple_set_block (mask_assign_stmt, DECL_INITIAL (dispatch_decl));
       gimple_set_bb (mask_assign_stmt, *empty_bb);
       gimple_seq_add_stmt (&gseq, mask_assign_stmt);
@@ -12938,32 +12943,34 @@ dispatch_function_versions (tree dispatch_decl,
 
   for (tree version_decl : *fndecls)
     {
-      function_versions [actual_versions].version_decl = version_decl;
+      function_versions[actual_versions].version_decl = version_decl;
       // Get attribute string, parse it and find the right features.
       parse_features_for_version (version_decl,
-                                  function_versions [actual_versions].features,
-                                  function_versions [actual_versions].prio);
+				  function_versions[actual_versions].features,
+				  function_versions[actual_versions].prio);
       actual_versions++;
     }
-  
 
-  auto compare_feature_version_info = [](const void *p1, const void *p2) {
-    const function_version_info v1 = *(const function_version_info *)p1;
-    const function_version_info v2 = *(const function_version_info *)p2;
-    return - compare_fmv_features (v1.features, v2.features, v1.prio, v2.prio);
-  };
+
+  auto compare_feature_version_info = [](const void *p1, const void *p2)
+    {
+      const function_version_info v1 = *(const function_version_info *)p1;
+      const function_version_info v2 = *(const function_version_info *)p2;
+      return - compare_fmv_features (v1.features, v2.features,
+				     v1.prio, v2.prio);
+    };
 
   /* Sort the versions according to descending order of dispatch priority.  */
   qsort (function_versions, actual_versions,
 	 sizeof (struct function_version_info), compare_feature_version_info);
 
-  for (unsigned int i = 0; i < actual_versions; ++i) 
+  for (unsigned int i = 0; i < actual_versions; ++i)
     {
       *empty_bb = add_condition_to_bb (dispatch_decl,
-                                      function_versions[i].version_decl,
-                                      &function_versions[i].features,
-                                      mask_var,
-                                      *empty_bb);
+				      function_versions[i].version_decl,
+				      &function_versions[i].features,
+				      mask_var,
+				      *empty_bb);
     }
 
   free (function_versions);
@@ -12983,7 +12990,7 @@ get_suffixed_assembler_name (tree default_decl, const char *suffix)
   if (size >= 8 && name.compare (size - 8, 8, ".default") == 0)
     name.resize (size - 8);
   name += suffix;
-  return get_identifier (name.c_str());
+  return get_identifier (name.c_str ());
 }
 
 /* Make the resolver function decl to dispatch the versions of
@@ -13041,14 +13048,14 @@ make_resolver_func (const tree default_decl,
   else
     TREE_PUBLIC (ifunc_alias_decl) = 0;
 
-  /* Build result decl and add to function_decl. */
+  /* Build result decl and add to function_decl.  */
   t = build_decl (UNKNOWN_LOCATION, RESULT_DECL, NULL_TREE, ptr_type_node);
   DECL_CONTEXT (t) = decl;
   DECL_ARTIFICIAL (t) = 1;
   DECL_IGNORED_P (t) = 1;
   DECL_RESULT (decl) = t;
 
-  /* Build parameter decls and add to function_decl. */
+  /* Build parameter decls and add to function_decl.  */
   tree arg1 = build_decl (UNKNOWN_LOCATION, PARM_DECL,
 			  get_identifier ("hwcap"),
 			  uint64_type_node);
@@ -13097,24 +13104,25 @@ riscv_mangle_decl_assembler_name (tree decl, tree id)
   if (TREE_CODE (decl) == FUNCTION_DECL
       && DECL_FUNCTION_VERSIONED (decl))
     {
-      std::string name = IDENTIFIER_POINTER (id) + std::string(".");
-      tree target_attr = lookup_attribute ("target_version", DECL_ATTRIBUTES (decl));
+      std::string name = IDENTIFIER_POINTER (id) + std::string (".");
+      tree target_attr = lookup_attribute ("target_version",
+					   DECL_ATTRIBUTES (decl));
 
       if (target_attr == NULL_TREE)
-        {
-          name += "default";
-          return get_identifier (name.c_str ());
-        }
+	{
+	  name += "default";
+	  return get_identifier (name.c_str ());
+	}
 
       const char *version_string = TREE_STRING_POINTER (TREE_VALUE (TREE_VALUE
-                                                        (target_attr)));
+							(target_attr)));
 
       /* Replace non-alphanumeric characters with underscores as the suffix.  */
       for (const char *c = version_string; *c; c++)
-        name += ISALNUM(*c) == 0 ? '_' : *c;
+	name += ISALNUM (*c) == 0 ? '_' : *c;
 
-      if (DECL_ASSEMBLER_NAME_SET_P(decl))
-        SET_DECL_RTL (decl, NULL);
+      if (DECL_ASSEMBLER_NAME_SET_P (decl))
+	SET_DECL_RTL (decl, NULL);
 
       id = get_identifier (name.c_str ());
     }
@@ -13242,7 +13250,8 @@ riscv_get_function_versions_dispatcher (void *decl)
     {
       struct riscv_feature_bits res;
       int priority; /* Unused.  */
-      parse_features_for_version (default_version_info->this_node->decl, res, priority);
+      parse_features_for_version (default_version_info->this_node->decl,
+				  res, priority);
       if (res.length == 0)
 	break;
       default_version_info = default_version_info->next;

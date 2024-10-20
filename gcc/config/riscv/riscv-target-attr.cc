@@ -223,7 +223,7 @@ riscv_target_attr_parser::handle_priority (const char *str)
   if (m_found_priority_p)
     error_at (m_loc, "%<target()%> attribute: priority appears more than once");
   m_found_priority_p = true;
-  
+
   if (sscanf (str, "%d", &m_priority) != 1)
     {
       error_at (m_loc, "%<target()%> attribute: invalid priority %qs", str);
@@ -333,10 +333,11 @@ num_occurrences_in_str (char c, char *str)
 }
 
 /* Parse the string ARGS that contains the target attribute information
-   and update the global target options space. */
+   and update the global target options space.  */
 
 bool
-riscv_process_target_attr (const char *args, location_t loc) {
+riscv_process_target_attr (const char *args, location_t loc)
+{
   size_t len = strlen (args);
 
   /* No need to emit warning or error on empty string here, generic code already
@@ -346,7 +347,7 @@ riscv_process_target_attr (const char *args, location_t loc) {
       return false;
     }
 
-  if (strcmp(args, "default") == 0)
+  if (strcmp (args, "default") == 0)
     {
       return true;
     }
@@ -444,10 +445,8 @@ riscv_option_valid_attribute_p (tree fndecl, tree, tree args, int)
 	= TREE_TARGET_OPTION (existing_target);
 
       if (existing_options)
-        {
-	  cl_target_option_restore (&global_options, &global_options_set,
-				    existing_options);
-        }
+	cl_target_option_restore (&global_options, &global_options_set,
+				  existing_options);
     }
   else
     cl_target_option_restore (&global_options, &global_options_set,
@@ -491,10 +490,10 @@ riscv_process_target_version_attr (tree args, location_t loc)
   if (TREE_CODE (args) == TREE_LIST)
     {
       if (TREE_CHAIN (args))
-        {
-          error ("attribute %<target_version%> has multiple values");
-          return false;
-        }
+	{
+	  error ("attribute %<target_version%> has multiple values");
+	  return false;
+	}
       args = TREE_VALUE (args);
     }
 

@@ -801,7 +801,7 @@ riscv_option_valid_attribute_p (tree, tree, tree, int);
 extern bool
 riscv_option_valid_version_attribute_p (tree, tree, tree, int);
 extern bool
-riscv_process_target_attr(const char *, location_t);
+riscv_process_target_attr (const char *, location_t);
 extern void
 riscv_override_options_internal (struct gcc_options *);
 extern void riscv_option_override (void);
