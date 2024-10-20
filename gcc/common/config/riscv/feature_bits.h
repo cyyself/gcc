@@ -18,7 +18,11 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
+#ifndef RISCV_FEATURE_BITS_H
+#define RISCV_FEATURE_BITS_H
+
 #define RISCV_FEATURE_BITS_LENGTH 2
+
 struct riscv_feature_bits {
   unsigned length;
   unsigned long long features[RISCV_FEATURE_BITS_LENGTH];
@@ -27,7 +31,14 @@ struct riscv_feature_bits {
 #define RISCV_VENDOR_FEATURE_BITS_LENGTH 1
 
 struct riscv_vendor_feature_bits {
-  unsigned vendorID;
   unsigned length;
   unsigned long long features[RISCV_VENDOR_FEATURE_BITS_LENGTH];
 };
+
+struct riscv_cpu_model {
+  unsigned mvendorid;
+  unsigned long long marchid;
+  unsigned long long mimpid;
+};
+
+#endif /* RISCV_FEATURE_BITS_H */
