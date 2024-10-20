@@ -39,16 +39,19 @@ public:
     : m_found_arch_p (false)
     , m_found_tune_p (false)
     , m_found_cpu_p (false)
+    , m_found_priority_p (false)
     , m_subset_list (nullptr)
     , m_loc (loc)
     , m_cpu_info (nullptr)
     , m_tune (nullptr)
+    , m_priority (0)
   {
   }
 
   bool handle_arch (const char *);
   bool handle_cpu (const char *);
   bool handle_tune (const char *);
+  bool handle_priority (const char *);
 
   void update_settings (struct gcc_options *opts) const;
 private:
@@ -58,10 +61,12 @@ private:
   bool m_found_arch_p;
   bool m_found_tune_p;
   bool m_found_cpu_p;
+  bool m_found_priority_p;
   riscv_subset_list *m_subset_list;
   location_t m_loc;
   const  riscv_cpu_info *m_cpu_info;
   const char *m_tune;
+  int m_priority;
 };
 }
 
@@ -80,7 +85,8 @@ struct riscv_attribute_info
 static const struct riscv_attribute_info riscv_attributes[]
   = {{"arch", &riscv_target_attr_parser::handle_arch},
      {"cpu", &riscv_target_attr_parser::handle_cpu},
-     {"tune", &riscv_target_attr_parser::handle_tune}};
+     {"tune", &riscv_target_attr_parser::handle_tune},
+     {"priority", &riscv_target_attr_parser::handle_priority}};
 
 bool
 riscv_target_attr_parser::parse_arch (const char *str)
@@ -210,6 +216,22 @@ riscv_target_attr_parser::handle_tune (const char *str)
   return true;
 }
 
+bool
+riscv_target_attr_parser::handle_priority (const char *str)
+{
+  if (m_found_priority_p)
+    error_at (m_loc, "%<target()%> attribute: priority appears more than once");
+  m_found_priority_p = true;
+
+  if (sscanf (str, "%d", &m_priority) != 1)
+    {
+      error_at (m_loc, "%<target()%> attribute: invalid priority %qs", str);
+      return false;
+    }
+
+  return true;
+}
+
 void
 riscv_target_attr_parser::update_settings (struct gcc_options *opts) const
 {
@@ -236,13 +258,16 @@ riscv_target_attr_parser::update_settings (struct gcc_options *opts) const
       if (m_cpu_info)
 	opts->x_riscv_tune_string = m_cpu_info->tune;
     }
+
+  if (m_priority)
+    opts->x_riscv_fmv_priority = m_priority;
 }
 
 /* Parse ARG_STR which contains the definition of one target attribute.
    Show appropriate errors if any or return true if the attribute is valid.  */
 
 static bool
-riscv_process_one_target_attr (char *arg_str,
+riscv_process_one_target_attr (const char *arg_str,
 			       location_t loc,
 			       riscv_target_attr_parser &attr_parser)
 {
@@ -271,6 +296,12 @@ riscv_process_one_target_attr (char *arg_str,
 
   arg[0] = '\0';
   ++arg;
+
+  /* Skip splitter ';' if it exists.  */
+  char *splitter = strchr (arg, ';');
+  if (splitter)
+    splitter[0] = '\0';
+
   for (const auto &attr : riscv_attributes)
     {
       /* If the names don't match up, or the user has given an argument
