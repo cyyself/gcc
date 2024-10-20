@@ -12758,19 +12758,55 @@ add_condition_to_bb (tree function_decl, tree version_decl,
       return new_bb;
     }
 
-  tree and_expr_var = create_tmp_var (long_long_unsigned_type_node);
-  tree and_expr = build2 (BIT_AND_EXPR,
-			  long_long_unsigned_type_node,
-			  mask_var,
-			  build_int_cst (long_long_unsigned_type_node,
-					 features->features[0])); // TODO: care for features[1]
-  gimple *and_stmt = gimple_build_assign (and_expr_var, and_expr);
-  gimple_set_block (and_stmt, DECL_INITIAL (function_decl));
-  gimple_set_bb (and_stmt, new_bb);
-  gimple_seq_add_stmt (&gseq, and_stmt);
-
   tree zero_llu = build_int_cst (long_long_unsigned_type_node, 0);
-  if_else_stmt = gimple_build_cond (EQ_EXPR, and_expr_var, zero_llu,
+  tree cond_status = create_tmp_var (boolean_type_node);
+  tree mask_array_ele_var = create_tmp_var (long_long_unsigned_type_node);
+  tree and_expr_var = create_tmp_var (long_long_unsigned_type_node);
+  tree eq_expr_var = create_tmp_var (boolean_type_node);
+
+  /* cond_status = true */
+  gimple *cond_init_stmt = gimple_build_assign (cond_status, boolean_true_node);
+  gimple_set_block (cond_init_stmt, DECL_INITIAL (function_decl));
+  gimple_set_bb (cond_init_stmt, new_bb);
+  gimple_seq_add_stmt (&gseq, cond_init_stmt);
+
+  for (int i = 0; i < RISCV_FEATURE_BITS_LENGTH; i++)
+    {
+      tree index_expr = build_int_cst (unsigned_type_node, i);
+      /* mask_array_ele_var = mask_var[i] */
+      tree mask_array_ref = build4 (ARRAY_REF, long_long_unsigned_type_node,
+                                    mask_var, index_expr, NULL_TREE, NULL_TREE);
+      
+      gimple *mask_stmt = gimple_build_assign (mask_array_ele_var, mask_array_ref);
+      gimple_set_block (mask_stmt, DECL_INITIAL (function_decl));
+      gimple_set_bb (mask_stmt, new_bb);
+      gimple_seq_add_stmt (&gseq, mask_stmt);
+      /* and_expr_var = mask_array_ele_var & features[i] */
+      tree and_expr = build2 (BIT_AND_EXPR,
+			      long_long_unsigned_type_node,
+			      mask_array_ele_var,
+			      build_int_cst (long_long_unsigned_type_node,
+			      features->features[i]));
+      gimple *and_stmt = gimple_build_assign (and_expr_var, and_expr);
+      gimple_set_block (and_stmt, DECL_INITIAL (function_decl));
+      gimple_set_bb (and_stmt, new_bb);
+      gimple_seq_add_stmt (&gseq, and_stmt);
+      /* eq_expr_var = and_expr_var == 0 */
+      tree eq_expr = build2 (EQ_EXPR, boolean_type_node,
+                             and_expr_var, zero_llu);
+      gimple *eq_stmt = gimple_build_assign (eq_expr_var, eq_expr);
+      gimple_set_block (eq_stmt, DECL_INITIAL (function_decl));
+      gimple_set_bb (eq_stmt, new_bb);
+      gimple_seq_add_stmt (&gseq, eq_stmt);
+      /* cond_status = cond_status & eq_expr_var */
+      tree cond_expr = build2 (BIT_AND_EXPR, boolean_type_node,
+                               cond_status, eq_expr_var);
+      gimple *cond_stmt = gimple_build_assign (cond_status, cond_expr);
+      gimple_set_block (cond_stmt, DECL_INITIAL (function_decl));
+      gimple_set_bb (cond_stmt, new_bb);
+      gimple_seq_add_stmt (&gseq, cond_stmt);
+    }
+  if_else_stmt = gimple_build_cond (EQ_EXPR, cond_status, boolean_true_node,
 				    NULL_TREE, NULL_TREE);
   gimple_set_block (if_else_stmt, DECL_INITIAL (function_decl));
   gimple_set_bb (if_else_stmt, new_bb);
@@ -12840,12 +12876,14 @@ dispatch_function_versions (tree dispatch_decl,
 
   /* Build the struct type for __riscv_feature_bits.  */
   tree global_type = lang_hooks.types.make_type (RECORD_TYPE);
+  tree features_type = build_array_type_nelts (long_long_unsigned_type_node,
+                                               RISCV_FEATURE_BITS_LENGTH);
   tree field1 = build_decl (UNKNOWN_LOCATION, FIELD_DECL,
 			    get_identifier ("length"),
 			    unsigned_type_node);
   tree field2 = build_decl (UNKNOWN_LOCATION, FIELD_DECL,
                             get_identifier ("features"),
-                            long_long_unsigned_type_node); // TODO: build_array_type ?
+                            features_type);
   DECL_FIELD_CONTEXT (field1) = global_type;
   DECL_FIELD_CONTEXT (field2) = global_type;
   TYPE_FIELDS (global_type) = field1;
@@ -12856,20 +12894,38 @@ dispatch_function_versions (tree dispatch_decl,
 				get_identifier ("__riscv_feature_bits"),
 				global_type);
   DECL_EXTERNAL (global_var) = 1;
-  tree mask_var = create_tmp_var (long_long_unsigned_type_node);
+  tree mask_var = create_tmp_var (features_type);
+  tree feature_ele_var = create_tmp_var (long_long_unsigned_type_node);
+  tree noted_var = create_tmp_var (long_long_unsigned_type_node);
 
-  tree component_expr = build3 (COMPONENT_REF, long_long_unsigned_type_node,
-				global_var, field2, NULL_TREE);
-  gimple *component_stmt = gimple_build_assign (mask_var, component_expr);
-  gimple_set_block (component_stmt, DECL_INITIAL (dispatch_decl));
-  gimple_set_bb (component_stmt, *empty_bb);
-  gimple_seq_add_stmt (&gseq, component_stmt);
 
-  tree not_expr = build1 (BIT_NOT_EXPR, long_long_unsigned_type_node, mask_var);
-  gimple *not_stmt = gimple_build_assign (mask_var, not_expr);
-  gimple_set_block (not_stmt, DECL_INITIAL (dispatch_decl));
-  gimple_set_bb (not_stmt, *empty_bb);
-  gimple_seq_add_stmt (&gseq, not_stmt);
+  for (int i = 0; i < RISCV_FEATURE_BITS_LENGTH; i++)
+    {
+      tree index_expr = build_int_cst (unsigned_type_node, i);
+      /* feature_ele_var = __riscv_feature_bits.features[i] */
+      tree component_expr = build3 (COMPONENT_REF, features_type,
+				    global_var, field2, NULL_TREE);
+      tree feature_array_ref = build4 (ARRAY_REF, long_long_unsigned_type_node,
+                                       component_expr, index_expr, NULL_TREE, NULL_TREE);
+      gimple *feature_stmt = gimple_build_assign (feature_ele_var, feature_array_ref);
+      gimple_set_block (feature_stmt, DECL_INITIAL (dispatch_decl));
+      gimple_set_bb (feature_stmt, *empty_bb);
+      gimple_seq_add_stmt (&gseq, feature_stmt);
+      /* noted_var = ~feature_ele_var */
+      tree not_expr = build1 (BIT_NOT_EXPR, long_long_unsigned_type_node,
+                              feature_ele_var);
+      gimple *not_stmt = gimple_build_assign (noted_var, not_expr);
+      gimple_set_block (not_stmt, DECL_INITIAL (dispatch_decl));
+      gimple_set_bb (not_stmt, *empty_bb);
+      gimple_seq_add_stmt (&gseq, not_stmt);
+      /* mask_var[i] = ~feature_ele_var */
+      tree mask_array_ref = build4 (ARRAY_REF, long_long_unsigned_type_node,
+                                    mask_var, index_expr, NULL_TREE, NULL_TREE);
+      gimple *mask_assign_stmt = gimple_build_assign (mask_array_ref, noted_var);
+      gimple_set_block (mask_assign_stmt, DECL_INITIAL (dispatch_decl));
+      gimple_set_bb (mask_assign_stmt, *empty_bb);
+      gimple_seq_add_stmt (&gseq, mask_assign_stmt);
+    }
 
   set_bb_seq (*empty_bb, gseq);
 
