@@ -18,8 +18,8 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
-#ifndef RISCV_FEATURE_BITS_H
-#define RISCV_FEATURE_BITS_H
+#ifndef GCC_RISCV_FEATURE_BITS_H
+#define GCC_RISCV_FEATURE_BITS_H
 
 #define RISCV_FEATURE_BITS_LENGTH 2
 
@@ -41,4 +41,4 @@ struct riscv_cpu_model {
   unsigned long long mimpid;
 };
 
-#endif /* RISCV_FEATURE_BITS_H */
+#endif /* GCC_RISCV_FEATURE_BITS_H */

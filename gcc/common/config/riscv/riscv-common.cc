@@ -1919,11 +1919,11 @@ riscv_minimal_hwprobe_feature_bits (const char *isa,
   for (int i = 0; i < RISCV_FEATURE_BITS_LENGTH; ++i)
     res->features[i] = 0;
 
-  /* Use a std::set to record all visted implied extensions.  */
+  /* Use a std::set to record all visited implied extensions.  */
   std::set <std::string> implied_exts;
 
   /* Iterate through the extension bitmask table in Linux hwprobe order to get
-     the minimal covered feature bits.  Avoding some sub-extensions which will
+     the minimal covered feature bits.  Avoiding some sub-extensions which will
      be implied by the super-extensions like V implied Zve32x.  */
   const riscv_ext_bitmask_table_t *ext_bitmask_tab;
   for (ext_bitmask_tab = &riscv_ext_bitmask_table[0];

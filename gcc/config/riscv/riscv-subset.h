@@ -22,7 +22,7 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef GCC_RISCV_SUBSET_H
 #define GCC_RISCV_SUBSET_H
 
-#include "common/config/riscv/feature_bits.h"
+#include "feature_bits.h"
 
 #define RISCV_DONT_CARE_VERSION -1
 
