@@ -465,6 +465,8 @@ riscv_option_valid_attribute_p (tree fndecl, tree, tree args, int)
 	  // This should be equivalent to applying the target_version once
 	  // after processing all target attributes.
 	  tree version_args = TREE_VALUE (version_attr);
+	  riscv_process_target_attr (version_args,
+				     DECL_SOURCE_LOCATION (fndecl));
           fprintf(stderr, "riscv_option_valid_attribute_p: %s\n", "version_attr");
 	}
       else
@@ -552,7 +554,7 @@ riscv_option_valid_version_attribute_p (tree fndecl, tree, tree args, int)
     cl_target_option_restore (&global_options, &global_options_set,
 			      TREE_TARGET_OPTION (target_option_current_node));
 
-  ret = riscv_process_target_version_attr (args, loc);
+  ret = riscv_process_target_attr (args, loc);
 
   /* Set up any additional state.  */
   if (ret)
