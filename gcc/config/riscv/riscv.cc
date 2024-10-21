@@ -13060,6 +13060,10 @@ riscv_stack_clash_protection_alloca_probe_range (void)
 #undef TARGET_C_MODE_FOR_FLOATING_TYPE
 #define TARGET_C_MODE_FOR_FLOATING_TYPE riscv_c_mode_for_floating_type
 
+#undef TARGET_OPTION_VALID_VERSION_ATTRIBUTE_P
+#define TARGET_OPTION_VALID_VERSION_ATTRIBUTE_P \
+  riscv_option_valid_version_attribute_p
+
 struct gcc_target targetm = TARGET_INITIALIZER;
 
 #include "gt-riscv.h"
