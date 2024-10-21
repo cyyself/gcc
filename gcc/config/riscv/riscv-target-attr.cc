@@ -30,6 +30,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "diagnostic.h"
 #include "opts.h"
 #include "riscv-subset.h"
+#include "stringpool.h"
+#include "attribs.h"
 
 namespace {
 class riscv_target_attr_parser
@@ -450,6 +452,17 @@ riscv_option_valid_attribute_p (tree fndecl, tree, tree args, int)
   ret = riscv_process_target_attr (args, loc);
   if (ret)
     {
+      tree version_attr = lookup_attribute ("target_version",
+					    DECL_ATTRIBUTES (fndecl));
+      if (version_attr != NULL_TREE)
+	{
+	  // Reapply any target_version attribute after target attribute.
+	  // This should be equivalent to applying the target_version once
+	  // after processing all target attributes.
+	  tree version_args = TREE_VALUE (version_attr);
+	  riscv_process_target_version_attr (version_args,
+					     DECL_SOURCE_LOCATION (fndecl));
+	}
       riscv_override_options_internal (&global_options);
       new_target = build_target_option_node (&global_options,
 					     &global_options_set);
