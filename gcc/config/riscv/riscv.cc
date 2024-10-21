@@ -12908,7 +12908,7 @@ dispatch_function_versions (tree dispatch_decl,
       gimple_set_block (not_stmt, DECL_INITIAL (dispatch_decl));
       gimple_set_bb (not_stmt, *empty_bb);
       gimple_seq_add_stmt (&gseq, not_stmt);
-      /* mask_var[i] = ~feature_ele_var.  */
+      /* mask_var[i] = noted_var.  */
       tree mask_array_ref = build4 (ARRAY_REF, long_long_unsigned_type_node,
 				    mask_var, index_expr, NULL_TREE, NULL_TREE);
       gimple *mask_assign_stmt = gimple_build_assign (mask_array_ref,
