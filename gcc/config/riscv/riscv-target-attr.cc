@@ -460,3 +460,84 @@ riscv_option_valid_attribute_p (tree fndecl, tree, tree args, int)
   cl_target_option_restore (&global_options, &global_options_set, &cur_target);
   return ret;
 }
+
+/* Parse the tree in ARGS that contains the target_version attribute
+   information and update the global target options space.  */
+
+bool
+riscv_process_target_version_attr (tree args, location_t loc)
+{
+  if (TREE_CODE (args) == TREE_LIST)
+    {
+      if (TREE_CHAIN (args))
+	{
+	  error ("attribute %<target_version%> has multiple values");
+	  return false;
+	}
+      args = TREE_VALUE (args);
+    }
+
+  if (!args || TREE_CODE (args) != STRING_CST)
+    {
+      error ("attribute %<target_version%> argument not a string");
+      return false;
+    }
+
+  const char *str = TREE_STRING_POINTER (args);
+  if (strcmp (str, "default") == 0)
+    return true;
+
+  return riscv_process_target_attr (str, loc);
+}
+
+
+/* Implement TARGET_OPTION_VALID_VERSION_ATTRIBUTE_P.  This is used to
+   process attribute ((target_version ("..."))).  */
+
+bool
+riscv_option_valid_version_attribute_p (tree fndecl, tree, tree args, int)
+{
+  struct cl_target_option cur_target;
+  bool ret;
+  tree new_target;
+  tree existing_target = DECL_FUNCTION_SPECIFIC_TARGET (fndecl);
+  location_t loc = DECL_SOURCE_LOCATION (fndecl);
+
+  /* Save the current target options to restore at the end.  */
+  cl_target_option_save (&cur_target, &global_options, &global_options_set);
+
+  /* If fndecl already has some target attributes applied to it, unpack
+     them so that we add this attribute on top of them, rather than
+     overwriting them.  */
+  if (existing_target)
+    {
+      struct cl_target_option *existing_options
+	= TREE_TARGET_OPTION (existing_target);
+
+      if (existing_options)
+	cl_target_option_restore (&global_options, &global_options_set,
+				  existing_options);
+    }
+  else
+    cl_target_option_restore (&global_options, &global_options_set,
+			      TREE_TARGET_OPTION (target_option_current_node));
+
+  ret = riscv_process_target_version_attr (args, loc);
+
+  /* Set up any additional state.  */
+  if (ret)
+    {
+      riscv_override_options_internal (&global_options);
+      new_target = build_target_option_node (&global_options,
+					     &global_options_set);
+    }
+  else
+    new_target = NULL;
+
+  if (fndecl && ret)
+    DECL_FUNCTION_SPECIFIC_TARGET (fndecl) = new_target;
+
+  cl_target_option_restore (&global_options, &global_options_set, &cur_target);
+
+  return ret;
+}
