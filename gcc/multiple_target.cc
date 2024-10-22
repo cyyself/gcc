@@ -38,6 +38,10 @@ along with GCC; see the file COPYING3.  If not see
 #include "gimple-walk.h"
 #include "tree-inline.h"
 #include "intl.h"
+/* Don't use GCC INCLUDE_STRING, INCLUDE_MAP since they are not compatible with
+   fsteram.  */
+#include <string>
+#include <map>
 
 /* Walker callback that replaces all FUNCTION_DECL of a function that's
    going to be versioned.  */
@@ -315,7 +319,26 @@ expand_target_clones (struct cgraph_node *node, bool definition)
 				       DECL_ATTRIBUTES (node->decl));
   /* No targets specified.  */
   if (!attr_target)
-    return false;
+    {
+      /* Skip functions that are declared but not defined.  */
+      if (target_profile != NULL && DECL_INITIAL (node->decl) != NULL_TREE)
+	{
+	  auto profile_map
+	    = static_cast<std::map <std::string, std::string> *>
+		(target_profile_map);
+	  auto it = profile_map->find(IDENTIFIER_POINTER (
+				      DECL_ASSEMBLER_NAME_RAW (node->decl)));
+	  if (it != profile_map->end())
+	    {
+	      attr_target = make_attribute ("target_clones", it->second.c_str(),
+					    DECL_ATTRIBUTES (node->decl));
+	    }
+	  else
+	    return false;
+	}
+      else
+	return false;
+    }
 
   tree arglist = TREE_VALUE (attr_target);
   int attr_len = get_target_clone_attr_len (arglist);

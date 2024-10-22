@@ -2604,6 +2604,13 @@ fprofile-reorder-functions
 Common Var(flag_profile_reorder_functions) Optimization
 Enable function reordering that improves code placement.
 
+ftarget-profile=
+Common Joined RejectNegative Var(target_profile)
+Enable target_clones profile options.
+
+Variable
+void *target_profile_map = NULL
+
 fpatchable-function-entry=
 Common Var(flag_patchable_function_entry) Joined Optimization
 Insert NOP instructions at each function entry.

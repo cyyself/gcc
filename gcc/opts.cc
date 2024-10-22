@@ -36,6 +36,11 @@ along with GCC; see the file COPYING3.  If not see
 #include "version.h"
 #include "selftest.h"
 #include "file-prefix-map.h"
+/* Don't use GCC INCLUDE_STRING, INCLUDE_MAP since they are not compatible with
+   fsteram.  */
+#include <fstream>
+#include <string>
+#include <map>
 
 /* In this file all option sets are explicit.  */
 #undef OPTION_SET_P
@@ -3138,6 +3143,26 @@ common_handle_option (struct gcc_options *opts,
     case OPT_fprofile_info_section:
       opts->x_profile_info_section = ".gcov_info";
       break;
+    case OPT_ftarget_profile_:
+      {
+	std::ifstream profile_file;
+	profile_file.open (arg);
+	if (profile_file.fail ())
+	  error_at (loc, "cannot open profile file %qs: %m", arg);
+	std::map <std::string, std::string> *profile_map
+	  = new std::map<std::string, std::string>();
+	opts->x_target_profile_map = profile_map;
+	std::string line;
+	while (std::getline (profile_file, line))
+	  {
+	    std::string::size_type pos = line.find (':');
+	    if (pos == std::string::npos)
+	      error_at (loc, "invalid profile file format");
+	    profile_map->insert (std::make_pair (line.substr (0, pos),
+						 line.substr (pos + 1)));
+	  }
+	break;
+      }
 
     case OPT_fpatchable_function_entry_:
       {
