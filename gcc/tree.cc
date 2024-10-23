@@ -15367,7 +15367,7 @@ get_target_clone_attr_len (tree arglist)
 	argnum++;
       argnum++;
     }
-  if (argnum <= 1)
+  if (argnum < 1)
     return -1;
   return str_len_sum;
 }

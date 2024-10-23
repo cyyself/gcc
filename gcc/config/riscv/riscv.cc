@@ -13515,7 +13515,6 @@ dispatch_function_versions (tree dispatch_decl,
 
   /* At least one more version other than the default.  */
   unsigned int num_versions = fndecls->length ();
-  gcc_assert (num_versions >= 2);
 
   struct function_version_info
     {
