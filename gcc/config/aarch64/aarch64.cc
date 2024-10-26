@@ -20437,6 +20437,7 @@ dispatch_function_versions (tree dispatch_decl,
   tree init_fn_id = get_identifier ("__init_cpu_features_resolver");
   tree init_fn_decl = build_decl (UNKNOWN_LOCATION, FUNCTION_DECL,
 				  init_fn_id, init_fn_type);
+  DECL_EXTERNAL (init_fn_decl) = 1;
   tree arg1 = DECL_ARGUMENTS (dispatch_decl);
   tree arg2 = TREE_CHAIN (arg1);
   ifunc_cpu_init_stmt = gimple_build_call (init_fn_decl, 2, arg1, arg2);
