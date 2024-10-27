@@ -446,8 +446,10 @@ redirect_to_specific_clone (cgraph_node *node)
   cgraph_function_version_info *fv = node->function_version ();
   if (fv == NULL)
     return;
+  const char *fmv_attr = (TARGET_HAS_FMV_TARGET_ATTRIBUTE
+			  ? "target" : "target_version");
 
-  tree attr_target = lookup_attribute ("target", DECL_ATTRIBUTES (node->decl));
+  tree attr_target = lookup_attribute (fmv_attr, DECL_ATTRIBUTES (node->decl));
   if (attr_target == NULL_TREE)
     return;
 
@@ -458,7 +460,7 @@ redirect_to_specific_clone (cgraph_node *node)
       if (!fv2)
 	continue;
 
-      tree attr_target2 = lookup_attribute ("target",
+      tree attr_target2 = lookup_attribute (fmv_attr,
 					    DECL_ATTRIBUTES (e->callee->decl));
 
       /* Function is not calling proper target clone.  */
@@ -472,7 +474,7 @@ redirect_to_specific_clone (cgraph_node *node)
 	  for (; fv2 != NULL; fv2 = fv2->next)
 	    {
 	      cgraph_node *callee = fv2->this_node;
-	      attr_target2 = lookup_attribute ("target",
+	      attr_target2 = lookup_attribute (fmv_attr,
 					       DECL_ATTRIBUTES (callee->decl));
 	      if (attr_target2 != NULL_TREE
 		  && attribute_value_equal (attr_target, attr_target2))
