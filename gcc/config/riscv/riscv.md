@@ -3847,7 +3847,10 @@
   ""
 {
   rtx target = riscv_legitimize_call_address (XEXP (operands[0], 0));
-  emit_call_insn (gen_sibcall_internal (target, operands[1], operands[2]));
+  emit_call_insn (riscv_is_noplt_call_p (target) ?
+                  gen_sibcall_internal_noplt (target, operands[1], operands[2]) :
+                  gen_sibcall_internal (target, operands[1], operands[2])
+  );
   DONE;
 })
 
@@ -3864,6 +3867,19 @@
    tail\t%0@plt"
   [(set_attr "type" "call")])
 
+(define_insn "sibcall_internal_noplt"
+  [(call (mem:SI (match_operand 0 "call_insn_operand" "j,S,U"))
+         (match_operand 1 "" ""))
+   (use (unspec:SI [
+          (match_operand 2 "const_int_operand")
+        ] UNSPEC_CALLEE_CC))]
+  "SIBLING_CALL_P (insn)"
+  "@
+   jr\t%0
+   tail\t%0
+   lga\tt1, %0\n\tjr\tt1"
+  [(set_attr "type" "call")])
+
 (define_expand "sibcall_value"
   [(parallel [(set (match_operand 0 "")
 		   (call (match_operand 1 "")
@@ -3874,8 +3890,12 @@
   ""
 {
   rtx target = riscv_legitimize_call_address (XEXP (operands[1], 0));
-  emit_call_insn (gen_sibcall_value_internal (operands[0], target, operands[2],
-					      operands[3]));
+  emit_call_insn (riscv_is_noplt_call_p (target) ?
+                  gen_sibcall_value_internal_noplt (operands[0], target, operands[2],
+                                                    operands[3]) :
+                  gen_sibcall_value_internal (operands[0], target, operands[2],
+                                              operands[3])
+  );
   DONE;
 })
 
@@ -3893,6 +3913,20 @@
    tail\t%1@plt"
   [(set_attr "type" "call")])
 
+(define_insn "sibcall_value_internal_noplt"
+  [(set (match_operand 0 "" "")
+	(call (mem:SI (match_operand 1 "call_insn_operand" "j,S,U"))
+	      (match_operand 2 "" "")))
+   (use (unspec:SI [
+          (match_operand 3 "const_int_operand")
+        ] UNSPEC_CALLEE_CC))]
+  "SIBLING_CALL_P (insn)"
+  "@
+   jr\t%1
+   tail\t%1
+   lga\tt1, %1\n\tjr\tt1"
+  [(set_attr "type" "call")])
+
 (define_expand "call"
   [(parallel [(call (match_operand 0 "")
 		    (match_operand 1 ""))
@@ -3902,7 +3936,10 @@
   ""
 {
   rtx target = riscv_legitimize_call_address (XEXP (operands[0], 0));
-  emit_call_insn (gen_call_internal (target, operands[1], operands[2]));
+  emit_call_insn (riscv_is_noplt_call_p (target) ?
+                  gen_call_internal_noplt (target, operands[1], operands[2]) :
+                  gen_call_internal (target, operands[1], operands[2])
+  );
   DONE;
 })
 
@@ -3920,6 +3957,20 @@
    call\t%0@plt"
   [(set_attr "type" "call")])
 
+(define_insn "call_internal_noplt"
+  [(call (mem:SI (match_operand 0 "call_insn_operand" "l,S,U"))
+	 (match_operand 1 "" ""))
+   (use (unspec:SI [
+          (match_operand 2 "const_int_operand")
+        ] UNSPEC_CALLEE_CC))
+   (clobber (reg:SI RETURN_ADDR_REGNUM))]
+  ""
+  "@
+   jalr\t%0
+   call\t%0
+   lga\tra, %0\n\tjalr\tra"
+  [(set_attr "type" "call")])
+
 (define_expand "call_value"
   [(parallel [(set (match_operand 0 "")
 		   (call (match_operand 1 "")
@@ -3930,8 +3981,12 @@
   ""
 {
   rtx target = riscv_legitimize_call_address (XEXP (operands[1], 0));
-  emit_call_insn (gen_call_value_internal (operands[0], target, operands[2],
-					   operands[3]));
+  emit_call_insn (riscv_is_noplt_call_p (target) ?
+                  gen_call_value_internal_noplt (operands[0], target,
+                                                 operands[2], operands[3]) :
+                  gen_call_value_internal (operands[0], target, operands[2],
+                                           operands[3])
+  );
   DONE;
 })
 
@@ -3948,6 +4003,21 @@
    jalr\t%1
    call\t%1
    call\t%1@plt"
+  [(set_attr "type" "call")])
+
+(define_insn "call_value_internal_noplt"
+  [(set (match_operand 0 "" "")
+	(call (mem:SI (match_operand 1 "call_insn_operand" "l,S,U"))
+	      (match_operand 2 "" "")))
+   (use (unspec:SI [
+          (match_operand 3 "const_int_operand")
+        ] UNSPEC_CALLEE_CC))
+   (clobber (reg:SI RETURN_ADDR_REGNUM))]
+  ""
+  "@
+   jalr\t%1
+   call\t%1
+   lga\tra, %1\n\tjalr\tra"
   [(set_attr "type" "call")])
 
 ;; Call subroutine returning any type.

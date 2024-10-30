@@ -12682,6 +12682,31 @@ riscv_c_mode_for_floating_type (enum tree_index ti)
   return default_mode_for_floating_type (ti);
 }
 
+/* Return true if calls to symbol-ref SYM should not go through
+   plt stubs.  */
+
+bool
+riscv_is_noplt_call_p (rtx sym)
+{
+  if (REG_P (sym))
+    return false;
+
+  const_tree decl = SYMBOL_REF_DECL (sym);
+
+  if (flag_pic
+      && decl
+      && (!flag_plt
+	  || lookup_attribute ("noplt", DECL_ATTRIBUTES (decl)))
+      && !targetm.binds_local_p (decl))
+    {
+      tree decl2 = (tree) decl;
+      fprintf(stderr, "[DEBUG] should use noplt call %s\n", IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (decl2)));
+      return true;
+    }
+
+  return false;
+}
+
 /* On riscv we have an ABI defined safe buffer.  This constant is used to
    determining the probe offset for alloca.  */
 
