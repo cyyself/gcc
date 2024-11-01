@@ -10057,6 +10057,7 @@ riscv_declare_function_name (FILE *stream, const char *name, tree fndecl)
 	TREE_TARGET_OPTION (target_option_default_node);
 
       const char *local_arch_str = get_arch_str (local_cl_target);
+      fprintf (stderr, "local_arch_str = %p\n", local_arch_str);
       const char *arch_str = local_arch_str != NULL
 	? local_arch_str
 	: riscv_arch_str (true).c_str ();

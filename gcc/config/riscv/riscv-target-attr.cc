@@ -220,7 +220,10 @@ riscv_target_attr_parser::update_settings (struct gcc_options *opts) const
       struct cl_target_option *default_opts
 	= TREE_TARGET_OPTION (target_option_default_node);
       if (opts->x_riscv_arch_string != default_opts->x_riscv_arch_string)
-	free (CONST_CAST (void *, (const void *) opts->x_riscv_arch_string));
+        {
+	  free (CONST_CAST (void *, (const void *) opts->x_riscv_arch_string));
+          fprintf (stderr, "Freeing %p\n", opts->x_riscv_arch_string);
+        }
       opts->x_riscv_arch_string = xstrdup (local_arch_str);
 
       riscv_set_arch_by_subset_list (m_subset_list, opts);
