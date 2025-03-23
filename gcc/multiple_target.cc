@@ -445,25 +445,20 @@ expand_target_clones (struct cgraph_node *node, bool definition)
 }
 
 /* When NODE is a target clone, consider all callees and redirect
-   to a clone with equal target attributes.  That prevents multiple
-   multi-versioning dispatches and a call-chain can be optimized.
-
-   This optimisation might pick the wrong version in some cases, since knowing
-   that we meet the target requirements for a matching callee version does not
-   tell us that we won't also meet the target requirements for a higher
-   priority callee version at runtime.  Since this is longstanding behaviour
-   for x86 and powerpc, we preserve it for those targets, but skip the optimisation
-   for targets that use the "target_version" attribute for multi-versioning.  */
+   to a clone with equal target attributes when there is no higher
+   priority version is available. That prevents multiple
+   multi-versioning dispatches and a call-chain can be optimized.  */
 
 static void
 redirect_to_specific_clone (cgraph_node *node)
 {
+  static const char *fmv_attr = (TARGET_HAS_FMV_TARGET_ATTRIBUTE
+				 ? "target" : "target_version");
   cgraph_function_version_info *fv = node->function_version ();
   if (fv == NULL)
     return;
 
-  gcc_assert (TARGET_HAS_FMV_TARGET_ATTRIBUTE);
-  tree attr_target = lookup_attribute ("target", DECL_ATTRIBUTES (node->decl));
+  tree attr_target = lookup_attribute (fmv_attr, DECL_ATTRIBUTES (node->decl));
   if (attr_target == NULL_TREE)
     return;
 
@@ -474,7 +469,7 @@ redirect_to_specific_clone (cgraph_node *node)
       if (!fv2)
 	continue;
 
-      tree attr_target2 = lookup_attribute ("target",
+      tree attr_target2 = lookup_attribute (fmv_attr,
 					    DECL_ATTRIBUTES (e->callee->decl));
 
       /* Function is not calling proper target clone.  */
@@ -484,19 +479,39 @@ redirect_to_specific_clone (cgraph_node *node)
 	  while (fv2->prev != NULL)
 	    fv2 = fv2->prev;
 
-	  /* Try to find a clone with equal target attribute.  */
+	  /* Try to find a clone with best target attribute and compatible with
+	     current caller.  */
+	  cgraph_node *best_callee = NULL;
 	  for (; fv2 != NULL; fv2 = fv2->next)
 	    {
 	      cgraph_node *callee = fv2->this_node;
-	      attr_target2 = lookup_attribute ("target",
+	      attr_target2 = lookup_attribute (fmv_attr,
 					       DECL_ATTRIBUTES (callee->decl));
-	      if (attr_target2 != NULL_TREE
-		  && attribute_value_equal (attr_target, attr_target2))
+	      if (attr_target2 != NULL_TREE)
 		{
-		  e->redirect_callee (callee);
-		  cgraph_edge::redirect_call_stmt_to_callee (e);
-		  break;
+		  if (targetm.compare_version_priority
+		      && targetm.version_compatible)
+		    {
+		      if (targetm.version_compatible (node->decl, callee->decl)
+			  && (best_callee == NULL ||
+			      targetm.compare_version_priority (best_callee->decl,
+								callee->decl) < 0))
+			best_callee = callee;
+		    }
+		  else
+		    {
+		      /* For targets does not support compare_version_priority,
+			 we need to check if the target attributes are equal.  */
+		      if (attribute_value_equal (attr_target, attr_target2))
+			best_callee = callee;
+		    }
 		}
+	    }
+
+	  if (best_callee != NULL)
+	    {
+	      e->redirect_callee (best_callee);
+	      cgraph_edge::redirect_call_stmt_to_callee (e);
 	    }
 	}
     }
@@ -515,9 +530,8 @@ ipa_target_clone (void)
   for (unsigned i = 0; i < to_dispatch.length (); i++)
     create_dispatcher_calls (to_dispatch[i]);
 
-  if (TARGET_HAS_FMV_TARGET_ATTRIBUTE)
-    FOR_EACH_FUNCTION (node)
-      redirect_to_specific_clone (node);
+  FOR_EACH_FUNCTION (node)
+    redirect_to_specific_clone (node);
 
   return 0;
 }
