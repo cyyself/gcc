@@ -12258,6 +12258,13 @@ is checked for dispatching earlier.  @var{decl1} and @var{decl2} are
  the two function decls that will be compared.
 @end deftypefn
 
+@deftypefn {Target Hook} bool TARGET_VERSION_COMPATIBLE (tree @var{caller}, tree @var{callee})
+This hook is used to check if two function versions are compatible to
+determine if a specific version of caller can call a specific version of
+callee directly.  @var{caller} and @var{callee} are the two function decls
+that will be checked for compatibility.
+@end deftypefn
+
 @deftypefn {Target Hook} tree TARGET_GET_FUNCTION_VERSIONS_DISPATCHER (void *@var{decl})
 This hook is used to get the dispatcher function for a set of function
 versions.  The dispatcher function is called to invoke the right function

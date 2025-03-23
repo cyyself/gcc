@@ -2564,6 +2564,18 @@ is checked for dispatching earlier.  @var{decl1} and @var{decl2} are\n\
  the two function decls that will be compared.",
  int, (tree decl1, tree decl2), NULL)
 
+/* Target hook is used to check if two function versions are compatible to
+   determine if a specific version of caller can call a specific version of
+   callee directly.  CALLER and CALLEE are the two function decls that will
+   be checked for compatibility.  */
+DEFHOOK
+(version_compatible,
+ "This hook is used to check if two function versions are compatible to\n\
+determine if a specific version of caller can call a specific version of\n\
+callee directly.  @var{caller} and @var{callee} are the two function decls\n\
+that will be checked for compatibility.",
+ bool, (tree caller, tree callee), NULL)
+
 /*  Target hook is used to generate the dispatcher logic to invoke the right
     function version at run-time for a given set of function versions.
     ARG points to the callgraph node of the dispatcher function whose body
