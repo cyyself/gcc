@@ -13213,6 +13213,27 @@ riscv_compare_version_priority (tree decl1, tree decl2)
   return compare_fmv_features (mask1, mask2, prio1, prio2);
 }
 
+
+bool
+riscv_version_compatible (tree caller, tree callee)
+{
+  struct cl_target_option caller_opts;
+  struct cl_target_option callee_opts;
+  bool caller_not_def = parse_features_for_version (caller, caller_opts);
+  bool callee_not_def = parse_features_for_version (callee, callee_opts);
+
+  /* Callee must be compatible with caller when callee is default.  */
+  if (! callee_not_def)
+    return true;
+
+  /* Callee must not be compatible with caller when caller is default but callee
+     is not.  */
+  if (! caller_not_def)
+    return false;
+
+  return riscv_ext_is_subset (&caller_opts, &callee_opts);
+}
+
 /* This function returns true if FN1 and FN2 are versions of the same function,
    that is, the target_version attributes of the function decls are different.
    This assumes that FN1 and FN2 have the same signature.  */
@@ -14426,6 +14447,9 @@ bool need_shadow_stack_push_pop_p ()
 
 #undef TARGET_COMPARE_VERSION_PRIORITY
 #define TARGET_COMPARE_VERSION_PRIORITY riscv_compare_version_priority
+
+#undef TARGET_VERSION_COMPATIBLE
+#define TARGET_VERSION_COMPATIBLE riscv_version_compatible
 
 #undef TARGET_OPTION_FUNCTION_VERSIONS
 #define TARGET_OPTION_FUNCTION_VERSIONS riscv_common_function_versions
