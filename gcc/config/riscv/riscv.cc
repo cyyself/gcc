@@ -13092,31 +13092,25 @@ riscv_c_mode_for_floating_type (enum tree_index ti)
   return default_mode_for_floating_type (ti);
 }
 
-/* This parses the attribute arguments to target_version in DECL and modifies
-   the feature mask and priority required to select those targets.  */
-static void
+/* This parses the attribute arguments for target_version in DECL and modifies
+   the cl_target_option &opt.  Return value indicates whether the attribute was
+   found and the arch is not default. If the attribute is not found, or the arch
+   is default, return false, and the res is not modified.  */
+static bool
 parse_features_for_version (tree decl,
-			    struct riscv_feature_bits &res,
-			    int &priority)
+			    struct cl_target_option &opt)
 {
   tree version_attr = lookup_attribute ("target_version",
 					DECL_ATTRIBUTES (decl));
   if (version_attr == NULL_TREE)
-    {
-      res.length = 0;
-      priority = 0;
-      return;
-    }
+    return false;
 
   const char *version_string = TREE_STRING_POINTER (TREE_VALUE (TREE_VALUE
 						    (version_attr)));
   gcc_assert (version_string != NULL);
   if (strcmp (version_string, "default") == 0)
-    {
-      res.length = 0;
-      priority = 0;
-      return;
-    }
+    return false;
+
   struct cl_target_option cur_target;
   cl_target_option_save (&cur_target, &global_options,
 			 &global_options_set);
@@ -13128,19 +13122,39 @@ parse_features_for_version (tree decl,
 
   riscv_process_target_version_attr (TREE_VALUE (version_attr),
 				     DECL_SOURCE_LOCATION (decl));
+  /* In case of the parse error, compilation will be aborted, thus
+     we don't need to check the return value.  */
 
-  priority = global_options.x_riscv_fmv_priority;
-  const char *arch_string = global_options.x_riscv_arch_string;
+  cl_target_option_save (&opt, &global_options,
+			 &global_options_set);
+
+  cl_target_option_restore (&global_options, &global_options_set,
+			    &cur_target);
+  return true;
+}
+
+/* This parses the attribute arguments to target_version in DECL and modifies
+   the feature mask and priority required to select those targets.  */
+static void
+parse_features_for_version (tree decl,
+			    struct riscv_feature_bits &res,
+			    int &priority)
+{
+  struct cl_target_option versioned_opts;
+  bool opts_res = parse_features_for_version (decl, versioned_opts);
+  if (! opts_res)
+    {
+      res.length = 0;
+      priority = 0;
+      return;
+    }
+
+  priority = versioned_opts.x_riscv_fmv_priority;
+  const char *arch_string = versioned_opts.x_riscv_arch_string;
   bool parse_res
     = riscv_minimal_hwprobe_feature_bits (arch_string, &res,
 					  DECL_SOURCE_LOCATION (decl));
   gcc_assert (parse_res);
-
-  if (arch_string != default_opts->x_riscv_arch_string)
-    free (CONST_CAST (void *, (const void *) arch_string));
-
-  cl_target_option_restore (&global_options, &global_options_set,
-			    &cur_target);
 }
 
 /* Compare priorities of two feature masks.  Return:
