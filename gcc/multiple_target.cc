@@ -311,6 +311,18 @@ create_target_clone (cgraph_node *node, bool definition, char *name,
   return new_node;
 }
 
+static inline bool
+is_fortran (const_tree decl)
+{
+  const_tree context = get_ultimate_context (decl);
+  if (context && TRANSLATION_UNIT_LANGUAGE (context))
+    return (strncmp (TRANSLATION_UNIT_LANGUAGE (context),
+		     "GNU Fortran", 11) == 0
+	    || strcmp (TRANSLATION_UNIT_LANGUAGE (context),
+		       "GNU F77") == 0);
+  return false;
+}
+
 /* If the function in NODE has multiple target attributes
    create the appropriate clone for each valid target attribute.  */
 
@@ -325,7 +337,7 @@ expand_target_clones (struct cgraph_node *node, bool definition)
   if (!attr_target)
     {
       /* Skip functions that are declared but not defined.  */
-      if (target_profile != NULL && DECL_INITIAL (node->decl) != NULL_TREE)
+      if (target_profile != NULL && DECL_INITIAL (node->decl) != NULL_TREE && !is_fortran (node->decl))
 	{
 	  auto profile_map
 	    = static_cast<std::map <std::string, std::string> *>
