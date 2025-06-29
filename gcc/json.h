@@ -183,6 +183,11 @@ class object : public value
   /* Set to literal true/false.  */
   void set_bool (const char *key, bool v);
 
+  bool iterate (unsigned i, const char **key) const
+  {
+    return m_keys.iterate (i, key);
+  }
+
   static int compare (const json::object &obj_a, const json::object &obj_b);
 
   size_t get_num_keys () const { return m_keys.length (); }
