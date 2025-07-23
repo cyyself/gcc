@@ -3071,7 +3071,7 @@ trans_function_start (gfc_symbol * sym)
     }
 
   /* Create RTL for function definition.  */
-  make_decl_rtl (fndecl);
+  // make_decl_rtl (fndecl);
 
   allocate_struct_function (fndecl, false);
 
