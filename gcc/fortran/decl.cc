@@ -11879,6 +11879,7 @@ const ext_attr_t ext_attr_list[] = {
   { "noinline",     EXT_ATTR_NOINLINE,     NULL	       },
   { "noreturn",     EXT_ATTR_NORETURN,     NULL	       },
   { "weak",	    EXT_ATTR_WEAK,	   NULL	       },
+  { "target",       EXT_ATTR_TARGET,       "target"    },
   { "target_clones", EXT_ATTR_TARGET_CLONES, "target_clones" },
   { NULL,           EXT_ATTR_LAST,         NULL        }
 };
@@ -11935,6 +11936,64 @@ gfc_match_gcc_attributes (void)
       if (!gfc_add_ext_attribute (&attr, (ext_attr_id_t)id, &gfc_current_locus))
 	return MATCH_ERROR;
 
+      /* Handle target attribute with arguments */
+      if (id == EXT_ATTR_TARGET)
+	{
+	  /* Expect opening parenthesis for target */
+	  if (gfc_match_char ('(') != MATCH_YES)
+	    {
+	      gfc_error ("Expected '(' after TARGET attribute at %C");
+	      return MATCH_ERROR;
+	    }
+	  
+	  gfc_expr *expr = NULL;
+	  
+	  /* Match quoted string argument */
+	  if (gfc_match_literal_constant (&expr, 0) == MATCH_YES)
+	    {
+	      /* Verify it's a character constant */
+	      if (expr->expr_type == EXPR_CONSTANT && expr->ts.type == BT_CHARACTER)
+		{
+		  /* Store the target specification for later processing */
+		  target_clones_data.count = 1;
+		  target_clones_data.args = (char **) xmalloc (sizeof (char *));
+		  
+		  /* Convert gfc_char_t* to char* */
+		  int len = expr->value.character.length;
+		  char *arg_str = (char *) xmalloc (len + 1);
+		  for (int i = 0; i < len; i++)
+		    arg_str[i] = (char) expr->value.character.string[i];
+		  arg_str[len] = '\0';
+		  
+		  target_clones_data.args[0] = arg_str;
+		  gfc_free_expr (expr);
+		  
+		  /* Expect closing parenthesis */
+		  if (gfc_match_char (')') != MATCH_YES)
+		    {
+		      gfc_error ("Expected ')' after TARGET attribute argument at %C");
+		      if (target_clones_data.args[0])
+			free (target_clones_data.args[0]);
+		      free (target_clones_data.args);
+		      target_clones_data.args = NULL;
+		      target_clones_data.count = 0;
+		      return MATCH_ERROR;
+		    }
+		}
+	      else
+		{
+		  gfc_free_expr (expr);
+		  gfc_error ("TARGET attribute argument must be a character constant at %C");
+		  return MATCH_ERROR;
+		}
+	    }
+	  else
+	    {
+	      gfc_error ("Expected quoted string argument in TARGET attribute at %C");
+	      return MATCH_ERROR;
+	    }
+	}
+      
       /* Handle target_clones attribute with arguments */
       if (id == EXT_ATTR_TARGET_CLONES)
 	{
@@ -12042,6 +12101,19 @@ attribute_parsed:
 	return MATCH_ERROR;
 
       sym->attr.ext_attr |= attr.ext_attr;
+
+      /* Apply target arguments if this attribute was specified */
+      if (attr.ext_attr & (1 << EXT_ATTR_TARGET))
+	{
+	  if (target_clones_data.args && target_clones_data.count > 0)
+	    {
+	      sym->target_clones_args = (char **) xmalloc (target_clones_data.count * sizeof (char *));
+	      sym->target_clones_count = target_clones_data.count;
+	      
+	      for (int i = 0; i < target_clones_data.count; i++)
+		sym->target_clones_args[i] = xstrdup (target_clones_data.args[i]);
+	    }
+	}
 
       /* Apply target_clones arguments if this attribute was specified */
       if (attr.ext_attr & (1 << EXT_ATTR_TARGET_CLONES))
