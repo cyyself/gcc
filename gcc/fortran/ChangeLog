@@ -1,3 +1,23 @@
+2025-09-24  ZAMBAR  <zambar@shanghaitech.edu.cn>
+
+	* decl.cc (ext_attr_list): Add EXT_ATTR_TARGET_CLONES and EXT_ATTR_TARGET.
+	(target_clones_args_t): New structure for temporary argument storage.
+	(gfc_match_gcc_attributes): Add parsing support for target_clones
+	attribute with string arguments and target attribute.
+	* f95-lang.cc (gfc_handle_target_clones_attribute): New function to
+	handle target_clones attribute in middle-end.
+	(gfc_handle_target_attribute): New function to handle target attribute.
+	(gfc_gnu_attributes): Add target_clones and target attribute entries.
+	* gfortran.h (ext_attr_id_t): Add EXT_ATTR_TARGET_CLONES and EXT_ATTR_TARGET.
+	(gfc_symbol): Add target_clones_args, target_clones_count, and
+	target_args fields for storing attribute arguments.
+	* symbol.cc (gfc_free_symbol): Free target_clones_args and target_args
+	memory when symbol is freed.
+	* trans-decl.cc (add_attributes_to_decl): Add handling for target_clones
+	and target attributes with their arguments.
+	(trans_function_start): Remove premature make_decl_rtl call to allow
+	proper function name generation for multiversioning.
+
 2025-05-01  Paul Thomas  <pault@gcc.gnu.org>
 
 	PR fortran/119948

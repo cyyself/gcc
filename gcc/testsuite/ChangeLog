@@ -1,3 +1,26 @@
+2025-09-24  ZAMBAR  <zambar@shanghaitech.edu.cn>
+
+	* gfortran.target/aarch64/target_attr.exp: New test suite for target
+	attribute functionality.
+	* gfortran.target/aarch64/target_attr_1.f90: New test for basic target
+	attribute syntax.
+	* gfortran.target/aarch64/target_attr_2.f90: New test for target
+	attribute error handling.
+	* gfortran.target/aarch64/target_attr_3.f90: New test for target
+	attribute runtime functionality.
+	* gfortran.target/aarch64/target_clones.exp: New test suite for
+	target_clones attribute functionality.
+	* gfortran.target/aarch64/target_clones_1.f90: New test for basic
+	target_clones functionality with assembly verification.
+	* gfortran.target/aarch64/target_clones_2.f90: New test for both
+	single and double quote syntax in target_clones.
+	* gfortran.target/aarch64/target_clones_3.f90: New test for
+	target_clones error handling and syntax validation.
+	* gfortran.target/aarch64/target_clones_4.f90: New test for
+	target_clones runtime functionality.
+	* gfortran.target/aarch64/target_clones_5.f90: New test for
+	target_clones with modules and modern Fortran syntax.
+
 2025-05-02  Andrew Pinski  <quic_apinski@quicinc.com>
 
 	PR rtl-optimization/120059
