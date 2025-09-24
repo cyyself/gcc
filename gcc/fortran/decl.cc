@@ -12409,6 +12409,8 @@ const ext_attr_t ext_attr_list[] = {
   { "noinline",     EXT_ATTR_NOINLINE,     NULL	       },
   { "noreturn",     EXT_ATTR_NORETURN,     NULL	       },
   { "weak",	    EXT_ATTR_WEAK,	   NULL	       },
+  { "target",       EXT_ATTR_TARGET,       "target"    },
+  { "target_clones", EXT_ATTR_TARGET_CLONES, "target_clones" },
   { NULL,           EXT_ATTR_LAST,         NULL        }
 };
 
@@ -12426,6 +12428,13 @@ const ext_attr_t ext_attr_list[] = {
 
    As there is absolutely no risk of confusion, we should never return
    MATCH_NO.  */
+
+/* Structure to temporarily hold target_clones arguments during parsing */
+typedef struct {
+  char **args;
+  int count;
+} target_clones_args_t;
+
 match
 gfc_match_gcc_attributes (void)
 {
@@ -12434,6 +12443,7 @@ gfc_match_gcc_attributes (void)
   unsigned id;
   gfc_symbol *sym;
   match m;
+  target_clones_args_t target_clones_data = { NULL, 0 };
 
   gfc_clear_attr (&attr);
   for(;;)
@@ -12456,6 +12466,143 @@ gfc_match_gcc_attributes (void)
       if (!gfc_add_ext_attribute (&attr, (ext_attr_id_t)id, &gfc_current_locus))
 	return MATCH_ERROR;
 
+      /* Handle target attribute with arguments */
+      if (id == EXT_ATTR_TARGET)
+	{
+	  /* Expect opening parenthesis for target */
+	  if (gfc_match_char ('(') != MATCH_YES)
+	    {
+	      gfc_error ("Expected '(' after TARGET attribute at %C");
+	      return MATCH_ERROR;
+	    }
+	  
+	  gfc_expr *expr = NULL;
+	  
+	  /* Match quoted string argument */
+	  if (gfc_match_literal_constant (&expr, 0) == MATCH_YES)
+	    {
+	      /* Verify it's a character constant */
+	      if (expr->expr_type == EXPR_CONSTANT && expr->ts.type == BT_CHARACTER)
+		{
+		  /* Store the target specification for later processing */
+		  target_clones_data.count = 1;
+		  target_clones_data.args = (char **) xmalloc (sizeof (char *));
+		  
+		  /* Convert gfc_char_t* to char* */
+		  int len = expr->value.character.length;
+		  char *arg_str = (char *) xmalloc (len + 1);
+		  for (int i = 0; i < len; i++)
+		    arg_str[i] = (char) expr->value.character.string[i];
+		  arg_str[len] = '\0';
+		  
+		  target_clones_data.args[0] = arg_str;
+		  gfc_free_expr (expr);
+		  
+		  /* Expect closing parenthesis */
+		  if (gfc_match_char (')') != MATCH_YES)
+		    {
+		      gfc_error ("Expected ')' after TARGET attribute argument at %C");
+		      if (target_clones_data.args[0])
+			free (target_clones_data.args[0]);
+		      free (target_clones_data.args);
+		      target_clones_data.args = NULL;
+		      target_clones_data.count = 0;
+		      return MATCH_ERROR;
+		    }
+		}
+	      else
+		{
+		  gfc_free_expr (expr);
+		  gfc_error ("TARGET attribute argument must be a character constant at %C");
+		  return MATCH_ERROR;
+		}
+	    }
+	  else
+	    {
+	      gfc_error ("Expected quoted string argument in TARGET attribute at %C");
+	      return MATCH_ERROR;
+	    }
+	}
+      
+      /* Handle target_clones attribute with arguments */
+      if (id == EXT_ATTR_TARGET_CLONES)
+	{
+	  /* Expect opening parenthesis for target_clones */
+	  if (gfc_match_char ('(') != MATCH_YES)
+	    {
+	      gfc_error ("Expected '(' after TARGET_CLONES attribute at %C");
+	      return MATCH_ERROR;
+	    }
+	  
+	  /* Parse comma-separated list of target specifications */
+	  for (;;)
+	    {
+	      gfc_expr *expr = NULL;
+	      
+	      /* Match quoted string argument */
+	      if (gfc_match_literal_constant (&expr, 0) == MATCH_YES)
+		{
+		  /* Verify it's a character constant */
+		  if (expr->expr_type == EXPR_CONSTANT && expr->ts.type == BT_CHARACTER)
+		    {
+		      target_clones_data.count++;
+		      target_clones_data.args = (char **) xrealloc (target_clones_data.args, 
+						         target_clones_data.count * sizeof (char *));
+		      
+		      /* Convert gfc_char_t* to char* */
+		      int len = expr->value.character.length;
+		      char *arg_str = (char *) xmalloc (len + 1);
+		      for (int i = 0; i < len; i++)
+			arg_str[i] = (char) expr->value.character.string[i];
+		      arg_str[len] = '\0';
+		      
+		      target_clones_data.args[target_clones_data.count - 1] = arg_str;
+		      gfc_free_expr (expr);
+		      
+		      /* Check for comma (more arguments) or closing parenthesis */
+		      gfc_gobble_whitespace ();
+		      if (gfc_match_char (',') == MATCH_YES)
+			{
+			  gfc_gobble_whitespace ();
+			  continue;
+			}
+		      else if (gfc_match_char (')') == MATCH_YES)
+			break;
+		      else
+			{
+			  gfc_error ("Expected ',' or ')' in TARGET_CLONES argument list at %C");
+			  goto target_clones_error;
+			}
+		    }
+		  else
+		    {
+		      gfc_free_expr (expr);
+		      gfc_error ("TARGET_CLONES arguments must be character constants at %C");
+		      goto target_clones_error;
+		    }
+		}
+	      else
+		{
+		  gfc_error ("Expected quoted string argument in TARGET_CLONES at %C");
+		  goto target_clones_error;
+		}
+	    }
+	  
+	  goto attribute_parsed;
+
+target_clones_error:
+	  if (target_clones_data.args)
+	    {
+	      for (int i = 0; i < target_clones_data.count; i++)
+		free (target_clones_data.args[i]);
+	      free (target_clones_data.args);
+	      target_clones_data.args = NULL;
+	      target_clones_data.count = 0;
+	    }
+	  return MATCH_ERROR;
+	}
+
+attribute_parsed:
       gfc_gobble_whitespace ();
       ch = gfc_next_ascii_char ();
       if (ch == ':')
@@ -12485,6 +12632,32 @@ gfc_match_gcc_attributes (void)
 
       sym->attr.ext_attr |= attr.ext_attr;
 
+      /* Apply target arguments if this attribute was specified */
+      if (attr.ext_attr & (1 << EXT_ATTR_TARGET))
+	{
+	  if (target_clones_data.args && target_clones_data.count > 0)
+	    {
+	      sym->target_clones_args = (char **) xmalloc (target_clones_data.count * sizeof (char *));
+	      sym->target_clones_count = target_clones_data.count;
+	      
+	      for (int i = 0; i < target_clones_data.count; i++)
+		sym->target_clones_args[i] = xstrdup (target_clones_data.args[i]);
+	    }
+	}
+
+      /* Apply target_clones arguments if this attribute was specified */
+      if (attr.ext_attr & (1 << EXT_ATTR_TARGET_CLONES))
+	{
+	  if (target_clones_data.args && target_clones_data.count > 0)
+	    {
+	      sym->target_clones_args = (char **) xmalloc (target_clones_data.count * sizeof (char *));
+	      sym->target_clones_count = target_clones_data.count;
+	      
+	      for (int i = 0; i < target_clones_data.count; i++)
+		sym->target_clones_args[i] = xstrdup (target_clones_data.args[i]);
+	    }
+	}
+
       if (gfc_match_eos () == MATCH_YES)
 	break;
 
@@ -12492,9 +12665,24 @@ gfc_match_gcc_attributes (void)
 	goto syntax;
     }
 
+  /* Clean up target_clones temporary data */
+  if (target_clones_data.args)
+    {
+      for (int i = 0; i < target_clones_data.count; i++)
+	free (target_clones_data.args[i]);
+      free (target_clones_data.args);
+    }
+
   return MATCH_YES;
 
 syntax:
+  /* Clean up target_clones temporary data on error */
+  if (target_clones_data.args)
+    {
+      for (int i = 0; i < target_clones_data.count; i++)
+	free (target_clones_data.args[i]);
+      free (target_clones_data.args);
+    }
   gfc_error ("Syntax error in !GCC$ ATTRIBUTES statement at %C");
   return MATCH_ERROR;
 }

@@ -1515,7 +1515,44 @@ add_attributes_to_decl (tree *decl_p, const gfc_symbol *sym)
     if (sym_attr.ext_attr & (1 << id) && ext_attr_list[id].middle_end_name)
       {
 	tree ident = get_identifier (ext_attr_list[id].middle_end_name);
-	list = tree_cons (ident, NULL_TREE, list);
+	
+	/* Special handling for target attribute with arguments */
+	if (id == EXT_ATTR_TARGET && sym->target_clones_args && sym->target_clones_count > 0)
+	  {
+	    tree args = NULL_TREE;
+	    
+	    /* Create string constant for target argument */
+	    tree str = build_string (strlen (sym->target_clones_args[0]), 
+				     sym->target_clones_args[0]);
+	    TREE_TYPE (str) = build_array_type (char_type_node,
+						build_index_type (size_int (strlen (sym->target_clones_args[0]))));
+	    args = tree_cons (NULL_TREE, str, args);
+	    
+	    /* Add the target attribute with its argument */
+	    list = tree_cons (ident, args, list);
+	  }
+	/* Special handling for target_clones attribute with arguments */
+	else if (id == EXT_ATTR_TARGET_CLONES && sym->target_clones_args && sym->target_clones_count > 0)
+	  {
+	    tree args = NULL_TREE;
+	    
+	    /* Create string constants for each target clone argument */
+	    for (int i = sym->target_clones_count - 1; i >= 0; i--)
+	      {
+		tree str = build_string (strlen (sym->target_clones_args[i]), 
+					 sym->target_clones_args[i]);
+		TREE_TYPE (str) = build_array_type (char_type_node,
+						    build_index_type (size_int (strlen (sym->target_clones_args[i]))));
+		args = tree_cons (NULL_TREE, str, args);
+	      }
+	    
+	    /* Add the target_clones attribute with its arguments */
+	    list = tree_cons (ident, args, list);
+	  }
+	else
+	  {
+	    list = tree_cons (ident, NULL_TREE, list);
+	  }
       }
 
   tree clauses = NULL_TREE;
@@ -3057,7 +3094,7 @@ trans_function_start (gfc_symbol * sym)
     }
 
   /* Create RTL for function definition.  */
-  make_decl_rtl (fndecl);
+  // make_decl_rtl (fndecl);
 
   allocate_struct_function (fndecl, false);
 

@@ -87,6 +87,70 @@ gfc_handle_omp_declare_target_attribute (tree *, tree, tree, int, bool *)
   return NULL_TREE;
 }
 
+/* Handle a "target" attribute; arguments as in
+   struct attribute_spec.handler.  */
+static tree
+gfc_handle_target_attribute (tree *node, tree name, tree args,
+			      int ARG_UNUSED (flags), bool *no_add_attrs)
+{
+  /* Ensure we have a function declaration.  */
+  if (TREE_CODE (*node) != FUNCTION_DECL)
+    {
+      warning (OPT_Wattributes, "%qE attribute ignored", name);
+      *no_add_attrs = true;
+    }
+  else if (! targetm.target_option.valid_attribute_p (*node, name, args,
+						      flags))
+    *no_add_attrs = true;
+
+  /* Check that there's no empty string in values of the attribute.  */
+  for (tree t = args; t != NULL_TREE; t = TREE_CHAIN (t))
+    {
+      tree value = TREE_VALUE (t);
+      if (TREE_CODE (value) == STRING_CST
+	  && TREE_STRING_LENGTH (value) == 1
+	  && TREE_STRING_POINTER (value)[0] == '\0')
+	{
+	  warning (OPT_Wattributes, "empty string in attribute %<target%>");
+	  *no_add_attrs = true;
+	}
+    }
+
+  return NULL_TREE;
+}
+
+/* Handle a "target_clones" attribute; arguments as in
+   struct attribute_spec.handler.  */
+static tree
+gfc_handle_target_clones_attribute (tree *node, tree name, tree args,
+				     int ARG_UNUSED (flags), bool *no_add_attrs)
+{
+  /* Ensure we have a function declaration.  */
+  if (TREE_CODE (*node) == FUNCTION_DECL)
+    {
+      for (tree t = args; t != NULL_TREE; t = TREE_CHAIN (t))
+	{
+	  tree value = TREE_VALUE (t);
+	  if (TREE_CODE (value) != STRING_CST)
+	    {
+	      error ("%qE attribute argument not a string constant", name);
+	      *no_add_attrs = true;
+	      return NULL_TREE;
+	    }
+	}
+
+      /* Do not inline functions with multiple clone targets.  */
+      DECL_UNINLINABLE (*node) = 1;
+    }
+  else
+    {
+      warning (OPT_Wattributes, "%qE attribute ignored", name);
+      *no_add_attrs = true;
+    }
+
+  return NULL_TREE;
+}
+
 /* Table of valid Fortran attributes.  */
 static const attribute_spec gfc_gnu_attributes[] =
 {
@@ -100,6 +164,10 @@ static const attribute_spec gfc_gnu_attributes[] =
     gfc_handle_omp_declare_target_attribute, NULL },
   { "oacc function", 0, -1, true,  false, false, false,
     gfc_handle_omp_declare_target_attribute, NULL },
+  { "target", 1, -1, true, false, false, false,
+    gfc_handle_target_attribute, NULL },
+  { "target_clones", 1, -1, true, false, false, false,
+    gfc_handle_target_clones_attribute, NULL },
 };
 
 static const scoped_attribute_specs gfc_gnu_attribute_table =

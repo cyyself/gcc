@@ -886,6 +886,8 @@ typedef enum
   EXT_ATTR_NOINLINE,
   EXT_ATTR_NORETURN,
   EXT_ATTR_WEAK,
+  EXT_ATTR_TARGET,
+  EXT_ATTR_TARGET_CLONES,
   EXT_ATTR_LAST, EXT_ATTR_NUM = EXT_ATTR_LAST
 }
 ext_attr_id_t;
@@ -2098,6 +2100,10 @@ typedef struct gfc_symbol
   /* This is for determining where the symbol has been used first, for better
      location of error messages.  */
   locus formal_at;
+
+  /* Storage for target_clones attribute arguments.  */
+  char **target_clones_args;
+  int target_clones_count;
 }
 gfc_symbol;
 

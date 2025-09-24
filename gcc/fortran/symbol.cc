@@ -3179,6 +3179,14 @@ gfc_free_symbol (gfc_symbol *&sym)
   if (sym->param_list)
     gfc_free_actual_arglist (sym->param_list);
 
+  /* Free target_clones arguments if present */
+  if (sym->target_clones_args)
+    {
+      for (int i = 0; i < sym->target_clones_count; i++)
+	      free (sym->target_clones_args[i]);
+      free (sym->target_clones_args);
+    }
+
   free (sym);
   sym = NULL;
 }

@@ -1,0 +1,23 @@
+# Copyright (C) 2025 Free Software Foundation, Inc.
+
+# Load support procs.
+load_lib gfortran-dg.exp
+
+# Default flags
+global DEFAULT_FFLAGS
+if ![info exists DEFAULT_FFLAGS] then {
+    set DEFAULT_FFLAGS " -pedantic-errors"
+}
+
+# Initialize dg
+dg-init
+
+verbose "Running TARGET attribute tests..." 1
+
+# Collect and run tests
+gfortran-dg-runtest [lsort \
+      [glob -nocomplain $srcdir/$subdir/target_attr_*.f90]] "" $DEFAULT_FFLAGS
+
+dg-finish
+
+
