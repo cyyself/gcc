@@ -3090,9 +3090,6 @@ trans_function_start (gfc_symbol * sym)
       rest_of_decl_compilation (fndecl, 1, 0);
     }
 
-  /* Create RTL for function definition.  */
-  make_decl_rtl (fndecl);
-
   allocate_struct_function (fndecl, false);
 
   /* function.cc requires a push at the start of the function.  */
