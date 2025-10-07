@@ -2741,6 +2741,13 @@ fprofile-reorder-functions
 Common Var(flag_profile_reorder_functions) Optimization
 Enable function reordering that improves code placement.
 
+ftarget-clones-table=
+Common Joined RejectNegative Var(target_clones_table)
+Enable target clones attributes specified in the JSON file.
+
+Variable
+const char *target_clones_table = NULL
+
 fpatchable-function-entry=
 Common Var(flag_patchable_function_entry) Joined RejectNegative Optimization
 Insert NOP instructions at each function entry.

@@ -21,6 +21,10 @@ along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
 #include "config.h"
+#include <fstream>
+#define INCLUDE_MAP
+#define INCLUDE_STRING
+#define INCLUDE_SSTREAM
 #include "system.h"
 #include "coretypes.h"
 #include "backend.h"
@@ -38,6 +42,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "gimple-walk.h"
 #include "tree-inline.h"
 #include "intl.h"
+#include "json-parsing.h"
 
 /* Walker callback that replaces all FUNCTION_DECL of a function that's
    going to be versioned.  */
@@ -252,29 +257,77 @@ create_target_clone (cgraph_node *node, bool definition, char *name,
   return new_node;
 }
 
+/* Skip functions that are declared but not defined.  Also skip C++
+   virtual functions, as they cannot be cloned.  The same logic is in the
+   function expand_target_clones below.  */
+static bool node_versionable_function_p (cgraph_node *node)
+{
+  return (!node->definition
+	  || (!node->alias && tree_versionable_function_p (node->decl)))
+	  && !DECL_VIRTUAL_P (node->decl)
+	  && (!DECL_FUNCTION_VERSIONED (node->decl)
+	      || is_function_default_version (node->decl));
+}
+
 /* If the function in NODE has multiple target attributes
    create the appropriate clone for each valid target attribute.  */
 
 static bool
-expand_target_clones (struct cgraph_node *node, bool definition)
+expand_target_clones (struct cgraph_node *node, bool definition,
+		      std::map <std::string, auto_vec<string_slice> >
+		      &clone_map)
 {
   /* Parsing target attributes separated by TARGET_CLONES_ATTR_SEPARATOR.  */
   tree attr_target = lookup_attribute ("target_clones",
 				       DECL_ATTRIBUTES (node->decl));
-  /* No targets specified.  */
-  if (!attr_target)
-    return false;
-
   int num_defaults = 0;
   auto_vec<string_slice> attr_list = get_clone_versions (node->decl,
 							 &num_defaults);
+  /* When target_clones attribute is present, but there is no valid
+     entries, we believe there can be another function with the same name
+     but has "target_version" specified, so we remove this function, this
+     only applies to aarch64 for now.  For RISC-V, it will give an error
+     earlier.
 
-  /* If the target clones list is empty after filtering, remove this node.  */
-  if (!TARGET_HAS_FMV_TARGET_ATTRIBUTE && attr_list.is_empty ())
+     This can barely happen in practice as the "default" attribute can
+     always be added to avoid this.  Thus, we even skip target clones table
+     lookup in this case.  Any following architectures that use
+     "target_version" semantics should aware of this behaviour if it will
+     not give error but just skip during attribute checking.  */
+  if (!TARGET_HAS_FMV_TARGET_ATTRIBUTE && attr_list.is_empty () && attr_target)
     {
       node->remove ();
       return false;
     }
+
+  if (DECL_INITIAL (node->decl) != NULL_TREE)
+    {
+      auto it = clone_map.find (IDENTIFIER_POINTER (
+				DECL_ASSEMBLER_NAME_RAW (node->decl)));
+      if (it != clone_map.end () && node_versionable_function_p (node))
+	{
+	  /* Merge valid target attributes from -ftarget-clones-table.  */
+	  for (string_slice attr : it->second)
+	    if (targetm.check_target_clone_version (attr, NULL))
+	      attr_list.safe_push (attr);
+	    else
+		warning_at (DECL_SOURCE_LOCATION (node->decl),
+			    0, "ignoring unsupported target clone "
+			    "version '%B' from target clones table",
+			    &attr);
+
+	  if (num_defaults == 0)
+	    {
+	      /* No default in the source attribute, add one.  */
+	      attr_list.safe_push ("default");
+	      num_defaults = 1;
+	    }
+	}
+    }
+
+  /* If there is no target_clones attribute, nothing to do.  */
+  if (attr_list.is_empty ())
+      return false;
 
   /* No need to clone for 1 target attribute.  */
   if (attr_list.length () == 1 && TARGET_HAS_FMV_TARGET_ATTRIBUTE)
@@ -545,11 +598,104 @@ is_simple_target_clones_case (cgraph_node *node)
   return true;
 }
 
+/* Initialize the clone map from the target clone table JSON file.  Specified
+   by the -ftarget-clone-table option.  The map is a mapping from symbol name
+   to a string with target clones attributes separated by
+   TARGET_CLONES_ATTR_SEPARATOR.  */
+static std::map <std::string, auto_vec<string_slice> >
+init_clone_map (void)
+{
+  std::map <std::string, auto_vec<string_slice> > res;
+  if (! target_clones_table)
+    return res;
+
+  /* Take target string from TARGET_NAME, this macro looks like
+     "x86_64-linux-gnu" and we need to strip all the suffixes
+     after the first dash, so it becomes "x86_64".  */
+  std::string target = TARGET_NAME;
+  if (target.find ('-') != std::string::npos)
+    target.erase (target.find ('-'));
+
+  /* Open the target clone table file and read to a string.  */
+  std::ifstream json_file (target_clones_table);
+  if (json_file.fail ())
+    {
+      error ("cannot open target clone table file %s",
+	     target_clones_table);
+      return res;
+    }
+  std::stringstream ss_buf;
+  ss_buf << json_file.rdbuf ();
+  std::string json_str = ss_buf.str ();
+
+  /* Parse the JSON string.
+     The JSON string format looks like this:
+     {
+       "symbol_name1": {
+	 "target1": ["clone1", "clone2", ...],
+	 "target2": ["clone1", "clone2", ...],
+       },
+       ...
+     }
+     where symbol_name is the ASM name of the function mangled by the
+     frontend.  The target1 and target2 are the targets, which can be
+     "x86_64", "aarch64", "riscv64", etc.  The clone1, clone2, etc are the
+     target clones attributes, which can be "avx2", "avx512" etc.  Note that
+     there is no need to specify the "default" target clone, it is
+     automatically added by the pass.  */
+  json::parser_result_t result = json::parse_utf8_string (
+    json_str.size (), json_str.c_str (), true, NULL);
+  if (auto json_err = result.m_err.get ())
+    {
+      error ("error parsing target clone table file %s: %s",
+	     target_clones_table, json_err->get_msg ());
+      return res;
+    }
+
+  auto json_val = result.m_val.get ();
+  auto kind = json_val->get_kind ();
+  if (kind != json::JSON_OBJECT)
+    {
+      error ("target clone table file %s is not a JSON object",
+	     target_clones_table);
+      return res;
+    }
+  auto json_obj = static_cast<const json::object *> (json_val);
+  for (const auto &json_entry : json_obj->get_map ())
+    {
+      const char *symbol_name = json_entry.first;
+      auto symbol_val = json_entry.second;
+      if (!symbol_val || symbol_val->get_kind () != json::JSON_OBJECT)
+	continue;
+      auto symbol_obj = static_cast<const json::object *> (symbol_val);
+      auto cur_target_val = symbol_obj->get (target.c_str ());
+      if (!cur_target_val
+	  || cur_target_val->get_kind () != json::JSON_ARRAY)
+	continue;
+      auto cur_target_array = static_cast<const json::array *>
+	(cur_target_val);
+      for (unsigned j = 0; j < cur_target_array->length (); j++)
+	{
+	  auto target_str_val = cur_target_array->get (j);
+	  if (target_str_val->get_kind () != json::JSON_STRING)
+	    error ("target clones attribute is not a string");
+	  const char *target_str
+	    = static_cast<const json::string *> (target_str_val)->get_string ();
+	  if (strcmp (target_str, "default") == 0)
+	      error ("No need to specify \"default\" in target clones table");
+	  res[symbol_name].safe_push (string_slice (ggc_strdup (target_str)));
+	}
+    }
+  return res;
+}
+
 static unsigned int
 ipa_target_clone (bool early)
 {
   struct cgraph_node *node;
   auto_vec<cgraph_node *> to_dispatch;
+  std::map <std::string, auto_vec<string_slice> > clone_map
+    = init_clone_map ();
 
   /* Don't need to do anything early for target attribute semantics.  */
   if (early && TARGET_HAS_FMV_TARGET_ATTRIBUTE)
@@ -582,7 +728,7 @@ ipa_target_clone (bool early)
 	 the simple case.  Simple cases are dispatched in the later stage.  */
 
       if (early == !is_simple_target_clones_case (node))
-	if (expand_target_clones (node, node->definition)
+	if (expand_target_clones (node, node->definition, clone_map)
 	    && TARGET_HAS_FMV_TARGET_ATTRIBUTE)
 	  /* In non target_version semantics, dispatch all target clones.  */
 	  to_dispatch.safe_push (node);
