@@ -519,10 +519,12 @@ extern void parse_options_from_collect_gcc_options (const char *, obstack *,
 extern void prepend_xassembler_to_collect_as_options (const char *, obstack *);
 
 extern char *gen_command_line_string (cl_decoded_option *options,
-				      unsigned int options_count);
+				      unsigned int options_count,
+				      int record_gcc_switches_mode);
 extern char *gen_producer_string (const char *language_string,
 				  cl_decoded_option *options,
-				  unsigned int options_count);
+				  unsigned int options_count,
+				  int record_gcc_switches_mode);
 
 /* Set OPTION in OPTS to VALUE if the option is not set in OPTS_SET.  */
 

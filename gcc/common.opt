@@ -3777,6 +3777,23 @@ grecord-gcc-switches
 Common Driver Var(dwarf_record_gcc_switches) Init(1)
 Record gcc command line switches in DWARF DW_AT_producer.
 
+grecord-gcc-switches=
+Common Driver Joined RejectNegative Var(dwarf_record_gcc_switches) Enum(record_gcc_switches)
+-grecord-gcc-switches[=default|all|none]	Record gcc command line
+switches in DWARF DW_AT_producer.
+
+Enum
+Name(record_gcc_switches) Type(int)
+
+EnumValue
+Enum(record_gcc_switches) String(none) Value(0)
+
+EnumValue
+Enum(record_gcc_switches) String(default) Value(1)
+
+EnumValue
+Enum(record_gcc_switches) String(all) Value(2)
+
 gsplit-dwarf
 Common Driver Var(dwarf_split_debug_info) Init(0)
 Generate debug information in separate .dwo files.

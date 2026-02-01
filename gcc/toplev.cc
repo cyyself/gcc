@@ -735,7 +735,8 @@ init_asm_output (const char *name)
 	      const char *str
 		= gen_producer_string (lang_hooks.name,
 				       save_decoded_options,
-				       save_decoded_options_count);
+				       save_decoded_options_count,
+				       1);
 	      targetm.asm_out.record_gcc_switches (str);
 	    }
 	  else
@@ -750,7 +751,8 @@ init_asm_output (const char *name)
 	  fputs (ASM_COMMENT_START, asm_out_file);
 	  fputs (" options passed: ", asm_out_file);
 	  char *cmdline = gen_command_line_string (save_decoded_options,
-						   save_decoded_options_count);
+						   save_decoded_options_count,
+						   1);
 	  fputs (cmdline, asm_out_file);
 	  free (cmdline);
 	  fputc ('\n', asm_out_file);
@@ -1426,7 +1428,8 @@ process_options ()
 	{
 	  fputs ("options passed: ", stderr);
 	  char *cmdline = gen_command_line_string (save_decoded_options,
-						   save_decoded_options_count);
+						   save_decoded_options_count,
+						   1);
 
 	  fputs (cmdline, stderr);
 	  free (cmdline);

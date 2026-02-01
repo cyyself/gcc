@@ -13062,6 +13062,7 @@ debugging information.
 @opindex grecord-gcc-switches
 @opindex gno-record-gcc-switches
 @item -grecord-gcc-switches
+@itemx -grecord-gcc-switches=@var{mode}
 @itemx -gno-record-gcc-switches
 This switch causes the command-line options used to invoke the
 compiler that may affect code generation to be appended to the
@@ -13069,6 +13070,10 @@ DW_AT_producer attribute in DWARF debugging information.  The options
 are concatenated with spaces separating them from each other and from
 the compiler version.
 It is enabled by default.
+The @var{mode} value may be @samp{default} (the existing filtering),
+@samp{all} (record all command-line switches, including preprocessor
+options such as @option{-I}, @option{-D}, and @option{-U}), or
+@samp{none} (equivalent to @option{-gno-record-gcc-switches}).
 See also @option{-frecord-gcc-switches} for another
 way of storing compiler options into the object file.
 

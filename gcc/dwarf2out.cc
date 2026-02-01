@@ -33610,7 +33610,8 @@ dwarf2out_early_finish (const char *filename)
   if (dwarf_record_gcc_switches)
     producer_string = gen_producer_string (lang_hooks.name,
 					   save_decoded_options,
-					   save_decoded_options_count);
+					   save_decoded_options_count,
+					   dwarf_record_gcc_switches);
   else
     producer_string = concat (lang_hooks.name, " ", version_string, NULL);
 
