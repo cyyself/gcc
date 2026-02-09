@@ -985,7 +985,9 @@ ix86_valid_target_attribute_inner_p (tree fndecl, tree args, char *p_strings[],
 				     struct gcc_options *opts,
 				     struct gcc_options *opts_set,
 				     struct gcc_options *enum_opts_set,
-				     bool target_clone_attr)
+				     bool target_clone_attr,
+				     location_t *loc_p,
+				     bool report_errors)
 {
   char *next_optstr;
   bool ret = true;
@@ -1182,8 +1184,11 @@ ix86_valid_target_attribute_inner_p (tree fndecl, tree args, char *p_strings[],
 		   MASK_RELAX_CMPXCHG_LOOP),
   };
 
-  location_t loc
-    = fndecl == NULL ? UNKNOWN_LOCATION : DECL_SOURCE_LOCATION (fndecl);
+  location_t loc = UNKNOWN_LOCATION;
+  if (loc_p && *loc_p != UNKNOWN_LOCATION)
+    loc = *loc_p;
+  else if (fndecl != NULL)
+    loc = DECL_SOURCE_LOCATION (fndecl);
   const char *attr_name = target_clone_attr ? "target_clone" : "target";
 
   /* If this is a list, recurse to get the options.  */
@@ -1194,7 +1199,8 @@ ix86_valid_target_attribute_inner_p (tree fndecl, tree args, char *p_strings[],
 	    && !ix86_valid_target_attribute_inner_p (fndecl, TREE_VALUE (args),
 						     p_strings, opts, opts_set,
 						     enum_opts_set,
-						     target_clone_attr))
+						     target_clone_attr,
+						     loc_p, report_errors))
 	  ret = false;
 
       return ret;
@@ -1202,7 +1208,8 @@ ix86_valid_target_attribute_inner_p (tree fndecl, tree args, char *p_strings[],
 
   else if (TREE_CODE (args) != STRING_CST)
     {
-      error_at (loc, "attribute %qs argument is not a string", attr_name);
+      if (report_errors)
+	error_at (loc, "attribute %qs argument is not a string", attr_name);
       return false;
     }
 
@@ -1266,8 +1273,9 @@ ix86_valid_target_attribute_inner_p (tree fndecl, tree args, char *p_strings[],
       /* Process the option.  */
       if (opt == N_OPTS)
 	{
-	  error_at (loc, "attribute %qs argument %qs is unknown",
-		    attr_name, orig_p);
+	  if (report_errors)
+	    error_at (loc, "attribute %qs argument %qs is unknown",
+		      attr_name, orig_p);
 	  ret = false;
 	}
 
@@ -1299,8 +1307,9 @@ ix86_valid_target_attribute_inner_p (tree fndecl, tree args, char *p_strings[],
 	    {
 	      if (!opt_set_p)
 		{
-		  error_at (loc, "pragma or attribute %<target(\"%s\")%> "
-			    "does not allow a negated form", p);
+		  if (report_errors)
+		    error_at (loc, "pragma or attribute %<target(\"%s\")%> "
+			      "does not allow a negated form", p);
 		  return false;
 		}
 
@@ -1331,8 +1340,9 @@ ix86_valid_target_attribute_inner_p (tree fndecl, tree args, char *p_strings[],
 	{
 	  if (p_strings[opt])
 	    {
-	      error_at (loc, "attribute value %qs was already specified "
-			"in %qs attribute", orig_p, attr_name);
+	      if (report_errors)
+		error_at (loc, "attribute value %qs was already specified "
+			  "in %qs attribute", orig_p, attr_name);
 	      ret = false;
 	    }
 	  else
@@ -1371,8 +1381,10 @@ ix86_valid_target_attribute_inner_p (tree fndecl, tree args, char *p_strings[],
 			global_dc);
 	  else
 	    {
-	      error_at (loc, "attribute value %qs is unknown in %qs attribute",
-			orig_p, attr_name);
+	      if (report_errors)
+		error_at (loc, "attribute value %qs is unknown in %qs "
+			  "attribute",
+			  orig_p, attr_name);
 	      ret = false;
 	    }
 	}
@@ -1399,7 +1411,8 @@ tree
 ix86_valid_target_attribute_tree (tree fndecl, tree args,
 				  struct gcc_options *opts,
 				  struct gcc_options *opts_set,
-				  bool target_clone_attr)
+				  bool target_clone_attr,
+				  location_t *loc_p)
 {
   const char *orig_arch_string = opts->x_ix86_arch_string;
   const char *orig_tune_string = opts->x_ix86_tune_string;
@@ -1420,7 +1433,7 @@ ix86_valid_target_attribute_tree (tree fndecl, tree args,
   /* Process each of the options on the chain.  */
   if (!ix86_valid_target_attribute_inner_p (fndecl, args, option_strings, opts,
 					    opts_set, &enum_opts_set,
-					    target_clone_attr))
+					    target_clone_attr, loc_p, true))
     return error_mark_node;
 
   /* If the changed options are different from the default, rerun
@@ -1561,7 +1574,7 @@ ix86_valid_target_attribute_p (tree fndecl,
   /* FLAGS == 1 is used for target_clones attribute.  */
   new_target
     = ix86_valid_target_attribute_tree (fndecl, args, &func_options,
-					&func_options_set, flags == 1);
+					&func_options_set, flags == 1, NULL);
 
   new_optimize = build_optimization_node (&func_options, &func_options_set);
 
@@ -1586,6 +1599,59 @@ ix86_valid_target_attribute_p (tree fndecl,
     }
 
   return ret;
+}
+
+/* Implement TARGET_CHECK_TARGET_CLONE_VERSION.  */
+
+bool
+ix86_check_target_clone_version (string_slice str, location_t *loc)
+{
+  str = str.strip ();
+
+  if (str == "default")
+    return true;
+
+  if (str.size () == 0)
+    {
+      if (loc)
+	warning_at (*loc, OPT_Wattributes,
+		    "empty string not valid for a %<target_clones%> version");
+      return false;
+    }
+
+  size_t len = str.size ();
+  char *buf = XNEWVEC (char, len + 1);
+  memcpy (buf, str.begin (), len);
+  buf[len] = '\0';
+
+  tree arg = build_string (len + 1, buf);
+  XDELETEVEC (buf);
+
+  struct gcc_options opts, opts_set;
+  struct gcc_options enum_opts_set;
+  memset (&opts, 0, sizeof (opts));
+  init_options_struct (&opts, NULL);
+  lang_hooks.init_options_struct (&opts);
+  memset (&opts_set, 0, sizeof (opts_set));
+  memset (&enum_opts_set, 0, sizeof (enum_opts_set));
+
+  cl_target_option_restore (&opts, &opts_set,
+	  TREE_TARGET_OPTION (target_option_default_node));
+
+  char *option_strings[IX86_FUNCTION_SPECIFIC_MAX] = { NULL, NULL };
+  bool ok
+    = ix86_valid_target_attribute_inner_p (NULL_TREE, arg, option_strings,
+	   &opts, &opts_set,
+	   &enum_opts_set, true,
+	   loc, false);
+  release_options_strings (option_strings);
+
+  if (!ok && loc)
+    warning_at (*loc, OPT_Wattributes,
+		"invalid version %qB for %<target_clones%> attribute",
+		&str);
+
+  return ok;
 }
 
 const char *stringop_alg_names[] = {

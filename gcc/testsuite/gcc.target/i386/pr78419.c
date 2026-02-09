@@ -3,7 +3,7 @@
 /* { dg-require-ifunc "" } */
 
 static double bar (double *__restrict, double *__restrict, int)
-__attribute__ ((target_clones("avx,foo,avx2,avx512f,default")));
+__attribute__ ((target_clones("avx,foo,avx2,avx512f,default"))); /* { dg-warning "invalid version .*foo.*target_clones" } */
 
 double
 foo (double *__restrict a, double *__restrict b, int n)
@@ -12,7 +12,7 @@ foo (double *__restrict a, double *__restrict b, int n)
 }
 
 double
-bar (double *__restrict a, double *__restrict b, int n)	/* { dg-error "attribute\[^\n\r]*foo\[^\n\r]* is unknown" } */
+bar (double *__restrict a, double *__restrict b, int n)
 {
   double s;
   int i;

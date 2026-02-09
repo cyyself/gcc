@@ -281,7 +281,9 @@ extern tree ix86_handle_shared_attribute (tree *, tree, tree, int, bool *);
 extern int x86_field_alignment (tree, int);
 extern tree ix86_valid_target_attribute_tree (tree, tree,
 					      struct gcc_options *,
-					      struct gcc_options *, bool);
+					      struct gcc_options *, bool,
+					      location_t *);
+extern bool ix86_check_target_clone_version (string_slice, location_t *);
 extern unsigned int ix86_get_callcvt (const_tree);
 extern bool ix86_type_no_callee_saved_registers_p (const_tree);
 

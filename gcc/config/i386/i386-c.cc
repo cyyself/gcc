@@ -806,7 +806,8 @@ ix86_pragma_target_parse (tree args, tree pop_target)
     {
       cur_tree = ix86_valid_target_attribute_tree (NULL_TREE, args,
 						   &global_options,
-						   &global_options_set, 0);
+						   &global_options_set,
+						   0, NULL);
       if (!cur_tree || cur_tree == error_mark_node)
        {
          cl_target_option_restore (&global_options, &global_options_set,

@@ -28143,6 +28143,9 @@ static const scoped_attribute_specs *const ix86_attribute_table[] =
 #undef TARGET_GIMPLE_FOLD_BUILTIN
 #define TARGET_GIMPLE_FOLD_BUILTIN ix86_gimple_fold_builtin
 
+#undef TARGET_CHECK_TARGET_CLONE_VERSION
+#define TARGET_CHECK_TARGET_CLONE_VERSION ix86_check_target_clone_version
+
 #undef TARGET_COMPARE_VERSION_PRIORITY
 #define TARGET_COMPARE_VERSION_PRIORITY ix86_compare_version_priority
 

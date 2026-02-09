@@ -1848,7 +1848,7 @@ get_builtin_code_for_version (tree decl, tree *predicate_list)
 			     &global_options_set);
       target_node
 	= ix86_valid_target_attribute_tree (decl, attrs, &global_options,
-					    &global_options_set, 0);
+					    &global_options_set, 0, NULL);
 
       gcc_assert (target_node);
       if (target_node == error_mark_node)
