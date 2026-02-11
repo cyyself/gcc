@@ -1,0 +1,5 @@
+{
+    "foo": {
+        "aarch64": ["sve2", "default"]
+    }
+}

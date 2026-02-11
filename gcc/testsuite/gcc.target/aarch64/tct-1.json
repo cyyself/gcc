@@ -1,0 +1,6 @@
+{
+    "foo.default": {
+        /* target_version("default") can also be cloned to other versions */
+        "aarch64": ["sve+sve2"]
+    }
+}

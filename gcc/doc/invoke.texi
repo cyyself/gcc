@@ -677,7 +677,7 @@ Objective-C and Objective-C++ Dialects}.
 -fspeculatively-call-stored-functions  -fsplit-paths
 -fsplit-wide-types  -fsplit-wide-types-early  -fssa-backprop  -fssa-phiopt
 -fstdarg-opt  -fstore-merging  -fstrict-aliasing -fipa-strict-aliasing
--fthread-jumps  -ftracer  -ftree-bit-ccp
+-ftarget-clones-table=@var{path}  -fthread-jumps  -ftracer  -ftree-bit-ccp
 -ftree-builtin-call-dce  -ftree-ccp  -ftree-ch  -ftree-coalesce-vars
 -ftree-copy-prop  -ftree-cselim  -ftree-dce  -ftree-dominator-opts
 -ftree-dse  -ftree-forwprop  -ftree-fre  -fcode-hoisting
@@ -13918,6 +13918,83 @@ resulting executable can find the beginning of that section and/or make
 assumptions based on that.
 
 The default is @option{-fzero-initialized-in-bss} except in Ada.
+
+@opindex ftarget-clones-table
+@item -ftarget-clones-table=@var{path}
+Read target clone information from the JSON-formatted file at @var{path}.
+This adds @code{target_clones} attributes on functions named in the file,
+and results in multiple versions and dispatcher of the function being
+created for different targets.  @xref{Attributes}.
+
+This is useful when you want to optimize a function for different CPU
+features and select the appropriate version at runtime based on the CPU
+features of the machine the program is running on without source code
+modification.
+
+This table is formatted as:
+
+@smallexample
+@{
+  "mangled_function_name1": @{
+    "target1": ["attr1", ...],
+    ...
+  @},
+  ...
+@}
+@end smallexample
+
+For example, say you have a C++ function named @code{foo} with return type
+@code{void} without parameters, and you want to clone it for targets
+@code{arch=x86-64-v3} and @code{arch=x86-64-v4} on x86-64 architecture.
+You can create a JSON formatted target_clone table file named
+@file{target_clones.json} with the following contents:
+
+@smallexample
+@{
+  "_Z3foov": @{ // For C++, you should use the mangled name of the function.
+    "x86_64": ["arch=x86-64-v3", "arch=x86-64-v4"]
+  @}
+@}
+@end smallexample
+
+Comments in JSON are allowed in the file, so you can add comments to explain
+the entries in the file about why you choose to clone the function for those
+targets and what attributes you use for each target for future reference.
+
+Then, you can use @option{-ftarget-clones-table=target_clones.json}
+to clone the function @code{foo} for the targets
+@code{arch=x86-64-v3} and @code{arch=x86-64-v4}. This is equivalent
+to adding the following attribute to the function definition:
+
+@smallexample
+#ifdef __x86_64__
+__attribute__ ((target_clones ("arch=x86-64-v3", "arch=x86-64-v4", "default")))
+#endif
+void foo (void) @{ ... @}
+@end smallexample
+
+This design also support to have multiple architectures in the same JSON
+formatted target_clone table.  For other architectures like aarch64 and
+riscv64, you can add entries like the following:
+
+@smallexample
+@{
+  "_Z3barv": @{
+    "x86_64": ["arch=x86-64-v3", "arch=diamondrapids"],
+    "aarch64": ["sve+sve2"],
+    "riscv64": ["arch=+b,+zvfh", "arch=rva23u64"]
+  @}
+@}
+@end smallexample
+
+Note: For architectures that does not support TARGET_CHECK_TARGET_CLONE_VERSION
+hook, if the target string can not be parsed, the compiler will raise an error
+and stops compilation. Currently, only aarch64 and RISC-V targets support this
+hook. When you use this option in your build script, check all available
+target strings and filter out the ones that can not be parsed by the compiler
+versions you use in your build.  This is recommended to avoid build breakage
+when the target clone table file is updated in the future with old compiler
+versions.
 
 @opindex fthread-jumps
 @opindex fno-thread-jumps
