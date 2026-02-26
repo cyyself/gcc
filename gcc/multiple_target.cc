@@ -264,6 +264,7 @@ static bool node_versionable_function_p (cgraph_node *node)
 {
   return (!node->definition
 	  || (!node->alias && tree_versionable_function_p (node->decl)))
+          && !DECL_DECLARED_INLINE_P (node->decl) 
 	  && !DECL_VIRTUAL_P (node->decl)
 	  && (!DECL_FUNCTION_VERSIONED (node->decl)
 	      || is_function_default_version (node->decl));
