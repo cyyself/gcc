@@ -6273,8 +6273,12 @@ copy_static_chain (tree static_chain, copy_body_data * id)
 bool
 tree_versionable_function_p (tree fndecl)
 {
+  struct function *fun = DECL_STRUCT_FUNCTION (fndecl);
+  if (!fun)
+    return false;
+
   return (!lookup_attribute ("noclone", DECL_ATTRIBUTES (fndecl))
-	  && copy_forbidden (DECL_STRUCT_FUNCTION (fndecl)) == NULL);
+	  && copy_forbidden (fun) == NULL);
 }
 
 /* Update clone info after duplication.  */

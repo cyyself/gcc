@@ -568,6 +568,23 @@ clone_function_name (const char *name, const char *suffix,
   return get_identifier (tmp_name);
 }
 
+/* Return true when either SUFFIX requests an IPA-SRA clone or SYMBOL_NAME
+   already denotes an IPA-SRA clone (contains .isra with target separator).  */
+
+static bool
+ipa_sra_suffix_p (const char *symbol_name, const char *suffix)
+{
+  if (suffix && (!strcmp (suffix, "isra") || !strncmp (suffix, "isra.", 5)))
+    return true;
+
+  if (!symbol_name)
+    return false;
+
+  char isra_pattern[7] = {symbol_table::symbol_suffix_separator (),
+                          'i', 's', 'r', 'a', '\0'};
+  return strstr (symbol_name, isra_pattern) != NULL;
+}
+
 /* Return a new assembler name for a clone of DECL.  Apart from the
    string SUFFIX, the new name will end with the specified NUMBER.  If
    clone numbering is not needed then the two argument
@@ -577,8 +594,26 @@ tree
 clone_function_name (tree decl, const char *suffix,
 		     unsigned long number)
 {
-  return clone_function_name (
-	   IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (decl)), suffix, number);
+  const char *name = IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (decl));
+  const char sep = symbol_table::symbol_suffix_separator ();
+  const char *version_sep = NULL;
+
+  if (ipa_sra_suffix_p (name, suffix) && DECL_FUNCTION_VERSIONED (decl))
+    version_sep = strchr (name, sep);
+
+  if (!version_sep)
+    return clone_function_name (name, suffix, number);
+
+  size_t len = (size_t) (version_sep - name);
+  size_t version_len = strlen (version_sep);
+  char *tmp_name, *prefix;
+  prefix = XALLOCAVEC (char, len + strlen (suffix) + version_len + 2);
+  memcpy (prefix, name, len);
+  prefix[len] = sep;
+  strcpy (prefix + len + 1, suffix);
+  strcpy (prefix + len + 1 + strlen (suffix), version_sep);
+  ASM_FORMAT_PRIVATE_NAME (tmp_name, prefix, number);
+  return get_identifier (tmp_name);
 }
 
 /* Return a new assembler name ending with the string SUFFIX for a
@@ -695,11 +730,30 @@ cgraph_node::create_virtual_clone (const vec<cgraph_edge *> &redirect_callers,
      sometimes storing only clone decl instead of original.  */
 
   /* Generate a new name for the new version. */
-  len = IDENTIFIER_LENGTH (DECL_NAME (old_decl));
-  name = XALLOCAVEC (char, len + strlen (suffix) + 2);
-  memcpy (name, IDENTIFIER_POINTER (DECL_NAME (old_decl)), len);
-  strcpy (name + len + 1, suffix);
-  name[len] = '.';
+  const char *old_name = IDENTIFIER_POINTER (DECL_NAME (old_decl));
+  const char sep = symbol_table::symbol_suffix_separator ();
+  const char *version_sep = NULL;
+  if (ipa_sra_suffix_p (old_name, suffix) && DECL_FUNCTION_VERSIONED (old_decl))
+    version_sep = strchr (old_name, sep);
+  bool split_fmv_suffix = (version_sep != NULL);
+  len = split_fmv_suffix ? (size_t) (version_sep - old_name)
+                         : IDENTIFIER_LENGTH (DECL_NAME (old_decl));
+  if (!split_fmv_suffix)
+    {
+      name = XALLOCAVEC (char, len + strlen (suffix) + 2);
+      memcpy (name, old_name, len);
+      strcpy (name + len + 1, suffix);
+      name[len] = sep;
+    }
+  else
+    {
+      size_t version_len = strlen (version_sep);
+      name = XALLOCAVEC (char, len + strlen (suffix) + version_len + 2);
+      memcpy (name, old_name, len);
+      name[len] = sep;
+      strcpy (name + len + 1, suffix);
+      strcpy (name + len + 1 + strlen (suffix), version_sep);
+    }
   DECL_NAME (new_decl) = get_identifier (name);
   SET_DECL_ASSEMBLER_NAME (new_decl,
 			   clone_function_name (old_decl, suffix, num_suffix));

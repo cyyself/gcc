@@ -659,9 +659,9 @@ purge_all_uses (tree name, hash_set <tree> *killed_ssas)
 	    lhs = gimple_assign_lhs (stmt);
 	  else if (gimple_code (stmt) == GIMPLE_PHI)
 	    lhs = gimple_phi_result (stmt);
-	  gcc_assert (lhs
-		      && (TREE_CODE (lhs) == SSA_NAME)
-		      && !gimple_vdef (stmt));
+    gcc_assert (lhs
+          && (TREE_CODE (lhs) == SSA_NAME)
+          && !gimple_vdef (stmt));
 	  if (!killed_ssas->add (lhs))
 	    {
 	      worklist.safe_push (lhs);

@@ -87,6 +87,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "sreal.h"
 #include "ipa-cp.h"
 #include "ipa-prop.h"
+#include "langhooks.h"
 
 static void ipa_sra_summarize_function (cgraph_node *);
 
@@ -643,7 +644,10 @@ struct obstack gensum_obstack;
 static bool
 ipa_sra_preliminary_function_checks (cgraph_node *node)
 {
-  if (!node->can_change_signature)
+  bool fmv_candidate = (node->function_version () != NULL
+			|| DECL_FUNCTION_VERSIONED (node->decl));
+
+  if (!node->can_change_signature && !fmv_candidate)
     {
       if (dump_file)
 	fprintf (dump_file, "Function cannot change signature.\n");
@@ -3120,14 +3124,18 @@ ipa_sra_dump_all_summaries (FILE *f, bool hints)
 static bool
 ipa_sra_ipa_function_checks (cgraph_node *node)
 {
-  if (!node->can_be_local_p ())
+  bool fmv_candidate = (node->function_version () != NULL
+			|| DECL_FUNCTION_VERSIONED (node->decl));
+
+  if (!fmv_candidate && !node->can_be_local_p ())
     {
       if (dump_file)
-	fprintf (dump_file, "Function %s disqualified because it cannot be "
-		 "made local.\n", node->dump_name ());
+  fprintf (dump_file, "Function %s disqualified because it cannot be "
+     "made local.\n", node->dump_name ());
       return false;
     }
-  if (!node->can_change_signature)
+
+  if (!node->can_change_signature && !fmv_candidate)
     {
       if (dump_file)
 	fprintf (dump_file, "Function can not change signature.\n");
@@ -3201,6 +3209,11 @@ check_for_caller_issues (struct cgraph_node *node, void *data)
 static bool
 check_all_callers_for_issues (cgraph_node *node)
 {
+  bool fmv_version_candidate = (node->function_version () != NULL
+				|| DECL_FUNCTION_VERSIONED (node->decl));
+  bool fmv_no_signature_candidate
+    = (fmv_version_candidate && node->address_taken);
+
   struct caller_issues issues;
   memset (&issues, 0, sizeof (issues));
   issues.candidate = node;
@@ -3247,6 +3260,16 @@ check_all_callers_for_issues (cgraph_node *node)
     }
   if (!issues.there_is_one)
     {
+      if (fmv_no_signature_candidate)
+  {
+    if (dump_file && (dump_flags & TDF_DETAILS))
+      fprintf (dump_file, "There is no call to %s that we can modify, "
+         "continuing because it is an address-taken FMV clone "
+         "candidate without signature changes.\n",
+         node->dump_name ());
+    return false;
+  }
+
       if (dump_file && (dump_flags & TDF_DETAILS))
 	fprintf (dump_file, "There is no call to %s that we can modify.  "
 		 "Disabling all modifications.\n", node->dump_name ());
@@ -4165,6 +4188,20 @@ process_isra_node_results (cgraph_node *node,
   if (!ifs || !ifs->m_candidate)
     return;
 
+  bool fmv_candidate = (node->function_version () != NULL
+			|| DECL_FUNCTION_VERSIONED (node->decl));
+  bool allow_no_signature_clone = fmv_candidate;
+
+  if (!node->can_change_signature && !allow_no_signature_clone)
+    {
+      if (dump_file && (dump_flags & TDF_DETAILS))
+	fprintf (dump_file, "  Not creating ISRA clone of %s because "
+		 "its signature cannot be changed.\n", node->dump_name ());
+      return;
+    }
+
+  bool remove_return_p = false;
+
   auto_vec<bool, 16> surviving_params;
   bool check_surviving = false;
   clone_info *cinfo = clone_info::get (node);
@@ -4176,7 +4213,18 @@ process_isra_node_results (cgraph_node *node,
 
   unsigned param_count = vec_safe_length (ifs->m_parameters);
   bool will_change_function = false;
-  if (ifs->m_returns_value && ifs->m_return_ignored)
+  if (allow_no_signature_clone)
+    {
+      auto_vec<cgraph_edge *> probe_callers = node->collect_callers ();
+      will_change_function = (!probe_callers.is_empty () || node->address_taken);
+      if (!will_change_function
+	  && dump_file && (dump_flags & TDF_DETAILS))
+	fprintf (dump_file, "  Not creating no-signature ISRA clone of %s "
+		 "because there are no direct callers to redirect.\n",
+		 node->dump_name ());
+      probe_callers.release ();
+    }
+  else if (remove_return_p)
     will_change_function = true;
   else
     for (unsigned i = 0; i < param_count; i++)
@@ -4200,48 +4248,65 @@ process_isra_node_results (cgraph_node *node,
     {
       fprintf (dump_file, "\nEvaluating analysis results for %s\n",
 	       node->dump_name ());
-      if (ifs->m_returns_value && ifs->m_return_ignored)
+      if (remove_return_p)
 	fprintf (dump_file, "  Will remove return value.\n");
     }
 
   ipcp_transformation *ipcp_ts = ipcp_get_transformation_summary (node);
   if (ipcp_ts)
     zap_useless_ipcp_results (ifs, ipcp_ts);
-  vec<ipa_adjusted_param, va_gc> *new_params = NULL;
-  if (ipa_param_adjustments *old_adjustments
-	 = cinfo ? cinfo->param_adjustments : NULL)
+  ipa_param_adjustments *new_adjustments = NULL;
+  if (!allow_no_signature_clone)
     {
-      unsigned old_adj_len = vec_safe_length (old_adjustments->m_adj_params);
-      for (unsigned i = 0; i < old_adj_len; i++)
+      vec<ipa_adjusted_param, va_gc> *new_params = NULL;
+      if (ipa_param_adjustments *old_adjustments
+	   = cinfo ? cinfo->param_adjustments : NULL)
 	{
-	  ipa_adjusted_param *old_adj = &(*old_adjustments->m_adj_params)[i];
-	  push_param_adjustments_for_index (ifs, old_adj->base_index, i,
-					    old_adj, ipcp_ts, &new_params);
+	  unsigned old_adj_len = vec_safe_length (old_adjustments->m_adj_params);
+	  for (unsigned i = 0; i < old_adj_len; i++)
+	    {
+	      ipa_adjusted_param *old_adj = &(*old_adjustments->m_adj_params)[i];
+	      push_param_adjustments_for_index (ifs, old_adj->base_index, i,
+						  old_adj, ipcp_ts, &new_params);
+	    }
+	}
+      else
+	for (unsigned i = 0; i < param_count; i++)
+	  push_param_adjustments_for_index (ifs, i, i, NULL, ipcp_ts,
+					      &new_params);
+
+      new_adjustments
+	= (new (ggc_alloc <ipa_param_adjustments> ())
+	   ipa_param_adjustments (new_params, param_count,
+				    remove_return_p));
+
+      if (dump_file && (dump_flags & TDF_DETAILS))
+	{
+	  fprintf (dump_file, "\n  Created adjustments:\n");
+	  new_adjustments->dump (dump_file);
 	}
     }
-  else
-    for (unsigned i = 0; i < param_count; i++)
-      push_param_adjustments_for_index (ifs, i, i, NULL, ipcp_ts, &new_params);
-
-  ipa_param_adjustments *new_adjustments
-    = (new (ggc_alloc <ipa_param_adjustments> ())
-       ipa_param_adjustments (new_params, param_count,
-			      ifs->m_returns_value && ifs->m_return_ignored));
-
-  if (dump_file && (dump_flags & TDF_DETAILS))
-    {
-      fprintf (dump_file, "\n  Created adjustments:\n");
-      new_adjustments->dump (dump_file);
-    }
+  else if (dump_file && (dump_flags & TDF_DETAILS))
+    fprintf (dump_file, "\n  Creating no-signature ISRA clone of %s.\n",
+	     node->dump_name ());
 
   unsigned &suffix_counter = clone_num_suffixes->get_or_insert (
 			       IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (
 				 node->decl)));
-  auto_vec<cgraph_edge *> callers = node->collect_callers ();
+  auto_vec<cgraph_edge *> callers;
+  if (!allow_no_signature_clone)
+    callers = node->collect_callers ();
+  else if (dump_file && (dump_flags & TDF_DETAILS))
+    fprintf (dump_file, "  Keeping existing callers of %s unchanged in no-signature FMV mode.\n",
+             node->dump_name ());
   cgraph_node *new_node
     = node->create_virtual_clone (callers, NULL, new_adjustments, "isra",
 				  suffix_counter);
   suffix_counter++;
+
+  if (allow_no_signature_clone)
+    new_node->mark_force_output ();
+
   if (node->calls_comdat_local && node->same_comdat_group)
     {
       new_node->add_to_same_comdat_group (node);
