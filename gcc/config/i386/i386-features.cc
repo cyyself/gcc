@@ -5550,6 +5550,15 @@ ix86_get_function_versions_dispatcher (void *decl)
       /* Right now, the dispatching is done via ifunc.  */
       dispatch_decl = make_dispatcher_decl (default_node->decl);
 
+      const char *default_asm_name
+	= IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (default_node->decl));
+      if (strstr (default_asm_name, ".isra."))
+	{
+	  cgraph_node *dispatch_node = cgraph_node::get (dispatch_decl);
+	  if (dispatch_node)
+	    dispatch_node->mark_force_output ();
+	}
+
       /* Set the dispatcher for all the versions.  */
       it_v = default_version_info;
       while (it_v != NULL)
@@ -5643,7 +5652,6 @@ make_resolver_func (const tree default_decl,
 					   profile_count::uninitialized ());
 
   cgraph_node::add_new_function (decl, true);
-  symtab->call_cgraph_insertion_hooks (cgraph_node::get_create (decl));
 
   pop_cfun ();
 
@@ -5652,6 +5660,10 @@ make_resolver_func (const tree default_decl,
   DECL_ATTRIBUTES (ifunc_alias_decl)
     = make_attribute ("ifunc", IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (decl)),
 		      DECL_ATTRIBUTES (ifunc_alias_decl));
+
+	cgraph_node *ifunc_alias_node = cgraph_node::get (ifunc_alias_decl);
+	if (ifunc_alias_node)
+		ifunc_alias_node->ifunc_resolver = true;
 
   /* Create the alias for dispatch to resolver here.  */
   cgraph_node::create_same_body_alias (ifunc_alias_decl, decl);
@@ -5692,6 +5704,45 @@ ix86_generate_version_dispatcher_body (void *node_p)
 
   resolver_decl = make_resolver_func (default_ver_decl,
 				      node->decl, &empty_bb);
+
+	const char *default_asm_name
+		= IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (default_ver_decl));
+	if (strstr (default_asm_name, ".isra."))
+		{
+			cgraph_node *resolver_node = cgraph_node::get (resolver_decl);
+			if (resolver_node)
+	resolver_node->mark_force_output ();
+
+			const char *isra_pos = strstr (default_asm_name, ".isra.");
+			if (isra_pos)
+			  {
+			    size_t base_len = isra_pos - default_asm_name;
+			    char *base_name = XNEWVEC (char, base_len + 1);
+			    memcpy (base_name, default_asm_name, base_len);
+			    base_name[base_len] = '\0';
+
+			    cgraph_node *orig_dispatcher
+			      = cgraph_node::get_for_asmname (get_identifier (base_name));
+			    XDELETEVEC (base_name);
+
+			    if (orig_dispatcher && orig_dispatcher != node)
+			      {
+				auto_vec<cgraph_edge *> callers;
+				for (cgraph_edge *e = orig_dispatcher->callers;
+				     e;
+				     e = e->next_caller)
+				  callers.safe_push (e);
+
+				unsigned i;
+				cgraph_edge *e;
+				FOR_EACH_VEC_ELT (callers, i, e)
+				  {
+				    e->redirect_callee (node);
+				    cgraph_edge::redirect_call_stmt_to_callee (e);
+				  }
+			      }
+			  }
+		}
 
   node_version_info->dispatcher_resolver = resolver_decl;
 

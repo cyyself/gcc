@@ -1200,6 +1200,44 @@ ipa_param_body_adjustments::mark_dead_statements (tree dead_param,
       use_operand_p use_p;
       tree t = stack.pop ();
 
+      bool all_uses_supported = true;
+      FOR_EACH_IMM_USE_FAST (use_p, imm_iter, t)
+  {
+    gimple *stmt = USE_STMT (use_p);
+
+    if (is_gimple_call (stmt)
+        || (m_id->blocks_to_copy
+      && !bitmap_bit_p (m_id->blocks_to_copy,
+            gimple_bb (stmt)->index))
+        || is_gimple_debug (stmt)
+        || gimple_code (stmt) == GIMPLE_PHI
+        || gimple_clobber_p (stmt))
+      continue;
+
+    if (is_gimple_assign (stmt))
+      {
+        tree lhs = gimple_assign_lhs (stmt);
+        if (TREE_CODE (lhs) == SSA_NAME)
+    continue;
+        all_uses_supported = false;
+        break;
+      }
+
+    if (gimple_code (stmt) == GIMPLE_RETURN)
+      {
+        if (m_adjustments && m_adjustments->m_skip_return)
+    continue;
+        all_uses_supported = false;
+        break;
+      }
+
+    all_uses_supported = false;
+    break;
+  }
+
+      if (!all_uses_supported)
+  continue;
+
       insert_decl_map (m_id, t, error_mark_node);
       FOR_EACH_IMM_USE_FAST (use_p, imm_iter, t)
 	{
@@ -1246,16 +1284,18 @@ ipa_param_body_adjustments::mark_dead_statements (tree dead_param,
 	      if (!gimple_clobber_p (stmt))
 		{
 		  tree lhs = gimple_assign_lhs (stmt);
-		  gcc_assert (TREE_CODE (lhs) == SSA_NAME);
-		  if (!m_dead_ssas.add (lhs))
-		    stack.safe_push (lhs);
+      if (TREE_CODE (lhs) == SSA_NAME
+          && !m_dead_ssas.add (lhs))
+        stack.safe_push (lhs);
 		}
 	    }
 	  else if (gimple_code (stmt) == GIMPLE_RETURN)
-	    gcc_assert (m_adjustments && m_adjustments->m_skip_return);
+      {
+        if (!(m_adjustments && m_adjustments->m_skip_return))
+    continue;
+      }
 	  else
-	    /* IPA-SRA does not analyze other types of statements.  */
-	    gcc_unreachable ();
+      continue;
 	}
     }
 
@@ -1292,7 +1332,10 @@ ipa_param_body_adjustments::mark_clobbers_dead (tree param)
      if (gimple_clobber_p (stmt))
        m_dead_stmts.add (stmt);
      else if (gimple_code (stmt) == GIMPLE_RETURN)
-       gcc_assert (m_adjustments && m_adjustments->m_skip_return);
+	      {
+		if (!(m_adjustments && m_adjustments->m_skip_return))
+		  continue;
+	      }
    }
 }
 

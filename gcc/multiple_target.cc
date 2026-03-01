@@ -693,10 +693,21 @@ init_clone_map (void)
 static unsigned int
 ipa_target_clone (bool early)
 {
+  static bool non_early_target_clones_table_done = false;
   struct cgraph_node *node;
   auto_vec<cgraph_node *> to_dispatch;
   std::map <std::string, auto_vec<string_slice> > clone_map
     = init_clone_map ();
+
+  /* With -ftarget-clones-table enabled, pass_target_clone(false) can be
+     scheduled more than once in the pipeline.  Keep the first non-early run
+     and skip the later one to avoid duplicate late rewrites.  */
+  if (!early && target_clones_table)
+    {
+      if (non_early_target_clones_table_done)
+        return 0;
+      non_early_target_clones_table_done = true;
+    }
 
   /* Don't need to do anything early for target attribute semantics.  */
   if (early && TARGET_HAS_FMV_TARGET_ATTRIBUTE)
@@ -742,13 +753,52 @@ ipa_target_clone (bool early)
 
   if (!TARGET_HAS_FMV_TARGET_ATTRIBUTE)
     FOR_EACH_FUNCTION (node)
-      if (is_function_default_version (node->decl)
-	  && DECL_FUNCTION_VERSIONED (node->decl)
-	  /* Don't dispatch target clones, as they haven't been expanded so
-	     are simple.  */
-	  && !lookup_attribute ("target_clones", DECL_ATTRIBUTES (node->decl)))
-	to_dispatch.safe_push (node);
+      {
+  cgraph_function_version_info *v = node->function_version ();
+  const char *asm_name
+    = IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (node->decl));
+  bool is_default = is_function_default_version (node->decl);
+  bool is_isra = strstr (asm_name, ".isra.") != NULL;
+  bool is_target_clones
+    = lookup_attribute ("target_clones", DECL_ATTRIBUTES (node->decl));
+  bool safe_late_isra_dispatch
+    = (!target_clones_table && is_isra && !node->callers);
 
+  if (!DECL_FUNCTION_VERSIONED (node->decl)
+      || !v
+      || !v->next
+      || node->dispatcher_function
+      || v->dispatcher_resolver)
+    continue;
+
+  /* In the early stage, skip plain target_clones declarations because they
+     are still simple and will be expanded later.  In the late stage, also
+     dispatch FMV sets rooted at IPA-SRA ISRA clones.  */
+  if (early)
+    {
+      if (is_default && !is_target_clones)
+        to_dispatch.safe_push (node);
+    }
+  else if ((is_default && !is_target_clones) || safe_late_isra_dispatch)
+    to_dispatch.safe_push (node);
+      }
+  else if (!early)
+    FOR_EACH_FUNCTION (node)
+      {
+  cgraph_function_version_info *v = node->function_version ();
+  const char *asm_name
+    = IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (node->decl));
+  if (!DECL_FUNCTION_VERSIONED (node->decl)
+      || !v
+      || !v->next
+      || node->dispatcher_function
+      || v->dispatcher_resolver)
+    continue;
+
+  if (is_function_default_version (node->decl)
+      || strstr (asm_name, ".isra."))
+    to_dispatch.safe_push (node);
+      }
   for (unsigned i = 0; i < to_dispatch.length (); i++)
     create_dispatcher_calls (to_dispatch[i]);
 

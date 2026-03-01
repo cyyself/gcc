@@ -3203,6 +3203,21 @@ check_for_caller_issues (struct cgraph_node *node, void *data)
   return false;
 }
 
+/* Worker for call_for_symbol_and_aliases, append all callers of NODE to
+   the vector passed in DATA.  */
+
+static bool
+collect_symbol_and_alias_callers (struct cgraph_node *node, void *data)
+{
+  auto_vec<cgraph_edge *> *callers
+    = static_cast<auto_vec<cgraph_edge *> *> (data);
+
+  for (cgraph_edge *cs = node->callers; cs; cs = cs->next_caller)
+    callers->safe_push (cs);
+
+  return false;
+}
+
 /* Look at all incoming edges to NODE, including aliases and thunks and look
    for problems.  Return true if NODE type should not be modified at all.  */
 
@@ -4177,12 +4192,76 @@ zap_useless_ipcp_results (const isra_func_summary *ifs, ipcp_transformation *ts)
     ts->m_vr = NULL;
 }
 
-/* Do final processing of results of IPA propagation regarding NODE, clone it
-   if appropriate.  */
+struct isra_fmv_clone_record
+{
+  tree orig_default_decl;
+  cgraph_node *new_node;
+  bool is_default;
+};
+
+/* Find FMV dispatcher node that dispatches to DEFAULT_NODE, if present.  */
+
+static cgraph_node *
+find_fmv_dispatcher_for_default (cgraph_node *default_node)
+{
+  if (!default_node)
+    return NULL;
+
+  cgraph_node *node;
+  FOR_EACH_FUNCTION (node)
+    {
+      if (!node->dispatcher_function)
+        continue;
+
+      cgraph_function_version_info *v = node->function_version ();
+      if (v && v->next && v->next->this_node == default_node)
+        return node;
+    }
+
+  return NULL;
+}
+
+static void
+link_isra_fmv_clone (cgraph_node *orig_node, cgraph_node *new_node,
+		     unsigned clone_num,
+		     vec<isra_fmv_clone_record> *isra_fmv_records)
+{
+  cgraph_function_version_info *orig_v = orig_node->function_version ();
+  if (!orig_v)
+    return;
+
+  while (orig_v->prev)
+    orig_v = orig_v->prev;
+
+  tree orig_default_decl = orig_v->this_node->decl;
+  if (orig_v->dispatcher_resolver)
+    orig_default_decl = orig_v->dispatcher_resolver;
+  bool default_version_p = is_function_default_version (orig_node->decl);
+
+  cgraph_function_version_info *new_v = new_node->function_version ();
+  if (!new_v)
+    new_v = new_node->insert_new_function_version ();
+
+  new_v->prev = NULL;
+  new_v->next = NULL;
+  new_v->dispatcher_resolver = NULL;
+
+  DECL_FUNCTION_VERSIONED (new_node->decl) = true;
+  new_v->assembler_name
+    = clone_function_name (IDENTIFIER_POINTER (orig_v->assembler_name),
+			   "isra", clone_num);
+
+  isra_fmv_clone_record rec;
+  rec.orig_default_decl = orig_default_decl;
+  rec.new_node = new_node;
+  rec.is_default = default_version_p;
+  isra_fmv_records->safe_push (rec);
+}
 
 static void
 process_isra_node_results (cgraph_node *node,
-			   hash_map<const char *, unsigned> *clone_num_suffixes)
+			   hash_map<const char *, unsigned> *clone_num_suffixes,
+			   vec<isra_fmv_clone_record> *isra_fmv_records)
 {
   isra_func_summary *ifs = func_sums->get (node);
   if (!ifs || !ifs->m_candidate)
@@ -4215,7 +4294,9 @@ process_isra_node_results (cgraph_node *node,
   bool will_change_function = false;
   if (allow_no_signature_clone)
     {
-      auto_vec<cgraph_edge *> probe_callers = node->collect_callers ();
+      auto_vec<cgraph_edge *> probe_callers;
+      node->call_for_symbol_and_aliases (collect_symbol_and_alias_callers,
+					 &probe_callers, true);
       will_change_function = (!probe_callers.is_empty () || node->address_taken);
       if (!will_change_function
 	  && dump_file && (dump_flags & TDF_DETAILS))
@@ -4293,16 +4374,20 @@ process_isra_node_results (cgraph_node *node,
   unsigned &suffix_counter = clone_num_suffixes->get_or_insert (
 			       IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (
 				 node->decl)));
+  unsigned suffix_num = suffix_counter;
   auto_vec<cgraph_edge *> callers;
-  if (!allow_no_signature_clone)
+  if (allow_no_signature_clone)
+    node->call_for_symbol_and_aliases (collect_symbol_and_alias_callers,
+					 &callers, true);
+  else
     callers = node->collect_callers ();
-  else if (dump_file && (dump_flags & TDF_DETAILS))
-    fprintf (dump_file, "  Keeping existing callers of %s unchanged in no-signature FMV mode.\n",
-             node->dump_name ());
   cgraph_node *new_node
     = node->create_virtual_clone (callers, NULL, new_adjustments, "isra",
-				  suffix_counter);
+				  suffix_num);
   suffix_counter++;
+
+  if (allow_no_signature_clone && fmv_candidate)
+    link_isra_fmv_clone (node, new_node, suffix_num, isra_fmv_records);
 
   if (allow_no_signature_clone)
     new_node->mark_force_output ();
@@ -4642,12 +4727,62 @@ ipa_sra_analysis (void)
 
   hash_map<const char *, unsigned> *clone_num_suffixes
     = new hash_map<const char *, unsigned>;
+  auto_vec<isra_fmv_clone_record> isra_fmv_records;
 
   cgraph_node *node;
   FOR_EACH_FUNCTION_WITH_GIMPLE_BODY (node)
-    process_isra_node_results (node, clone_num_suffixes);
+    process_isra_node_results (node, clone_num_suffixes, &isra_fmv_records);
+
+  hash_map<tree, cgraph_node *> *isra_fmv_roots
+    = new hash_map<tree, cgraph_node *>;
+  for (isra_fmv_clone_record &rec : isra_fmv_records)
+    if (rec.is_default)
+      isra_fmv_roots->put (rec.orig_default_decl, rec.new_node);
+
+  for (isra_fmv_clone_record &rec : isra_fmv_records)
+    if (!rec.is_default)
+      {
+	cgraph_node **isra_default_node_slot
+	  = isra_fmv_roots->get (rec.orig_default_decl);
+	if (!isra_default_node_slot || !*isra_default_node_slot)
+	  continue;
+
+	cgraph_node *isra_default_node = *isra_default_node_slot;
+	cgraph_function_version_info *isra_default_v
+	  = isra_default_node->function_version ();
+	if (!isra_default_v)
+	  isra_default_v = isra_default_node->insert_new_function_version ();
+
+	cgraph_node::add_function_version (isra_default_v, rec.new_node->decl);
+	      }
+
+  for (isra_fmv_clone_record &rec : isra_fmv_records)
+    if (rec.is_default)
+      {
+  cgraph_node *orig_root_node = cgraph_node::get (rec.orig_default_decl);
+  if (orig_root_node && !orig_root_node->dispatcher_function)
+    {
+      cgraph_node *dispatcher
+        = find_fmv_dispatcher_for_default (orig_root_node);
+      if (dispatcher)
+        orig_root_node = dispatcher;
+    }
+  if (!orig_root_node)
+    continue;
+
+  auto_vec<cgraph_edge *> callers = orig_root_node->collect_callers ();
+  unsigned i;
+  cgraph_edge *e;
+  FOR_EACH_VEC_ELT (callers, i, e)
+    {
+      e->redirect_callee (rec.new_node);
+      cgraph_edge::redirect_call_stmt_to_callee (e);
+    }
+  callers.release ();
+      }
 
   delete clone_num_suffixes;
+  delete isra_fmv_roots;
   ggc_delete (func_sums);
   func_sums = NULL;
   delete call_sums;

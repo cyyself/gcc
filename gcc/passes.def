@@ -143,9 +143,8 @@ along with GCC; see the file COPYING3.  If not see
 	  POP_INSERT_PASSES ()
       POP_INSERT_PASSES ()
   POP_INSERT_PASSES ()
-
-   NEXT_PASS (pass_target_clone, false);
   NEXT_PASS (pass_ipa_auto_profile);
+   NEXT_PASS (pass_target_clone, false);
   PUSH_INSERT_PASSES_WITHIN (pass_ipa_auto_profile)
       NEXT_PASS (pass_feedback_split_functions);
   POP_INSERT_PASSES ()
@@ -171,6 +170,7 @@ along with GCC; see the file COPYING3.  If not see
   NEXT_PASS (pass_ipa_cdtor_merge);
   NEXT_PASS (pass_ipa_cp);
   NEXT_PASS (pass_ipa_sra);
+   NEXT_PASS (pass_target_clone, false);
   NEXT_PASS (pass_ipa_fn_summary);
   NEXT_PASS (pass_ipa_inline);
   NEXT_PASS (pass_ipa_locality_cloning);

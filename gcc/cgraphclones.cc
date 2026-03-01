@@ -605,14 +605,21 @@ clone_function_name (tree decl, const char *suffix,
     return clone_function_name (name, suffix, number);
 
   size_t len = (size_t) (version_sep - name);
+  size_t suffix_len = strlen (suffix);
   size_t version_len = strlen (version_sep);
-  char *tmp_name, *prefix;
-  prefix = XALLOCAVEC (char, len + strlen (suffix) + version_len + 2);
-  memcpy (prefix, name, len);
-  prefix[len] = sep;
-  strcpy (prefix + len + 1, suffix);
-  strcpy (prefix + len + 1 + strlen (suffix), version_sep);
-  ASM_FORMAT_PRIVATE_NAME (tmp_name, prefix, number);
+  char number_buf[32];
+  snprintf (number_buf, sizeof (number_buf), "%lu", number);
+  size_t number_len = strlen (number_buf);
+  char *tmp_name = XALLOCAVEC (char,
+                               len + 1 + suffix_len + 1 + number_len
+                               + version_len + 1);
+  memcpy (tmp_name, name, len);
+  tmp_name[len] = sep;
+  memcpy (tmp_name + len + 1, suffix, suffix_len);
+  tmp_name[len + 1 + suffix_len] = sep;
+  memcpy (tmp_name + len + 1 + suffix_len + 1, number_buf, number_len);
+  memcpy (tmp_name + len + 1 + suffix_len + 1 + number_len,
+          version_sep, version_len + 1);
   return get_identifier (tmp_name);
 }
 
@@ -747,12 +754,19 @@ cgraph_node::create_virtual_clone (const vec<cgraph_edge *> &redirect_callers,
     }
   else
     {
+      char number_buf[32];
+      snprintf (number_buf, sizeof (number_buf), "%u", num_suffix);
+      size_t number_len = strlen (number_buf);
       size_t version_len = strlen (version_sep);
-      name = XALLOCAVEC (char, len + strlen (suffix) + version_len + 2);
+      name = XALLOCAVEC (char, len + strlen (suffix) + number_len
+                         + version_len + 3);
       memcpy (name, old_name, len);
       name[len] = sep;
       strcpy (name + len + 1, suffix);
-      strcpy (name + len + 1 + strlen (suffix), version_sep);
+      name[len + 1 + strlen (suffix)] = sep;
+      strcpy (name + len + 1 + strlen (suffix) + 1, number_buf);
+      strcpy (name + len + 1 + strlen (suffix) + 1 + number_len,
+              version_sep);
     }
   DECL_NAME (new_decl) = get_identifier (name);
   SET_DECL_ASSEMBLER_NAME (new_decl,
