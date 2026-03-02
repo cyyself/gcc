@@ -883,9 +883,11 @@ add_src_to_param_flow (isra_param_flow *param_flow, int src)
 
 /* Add a SRC to the inputs of PARAM_FLOW unless it is already there and assert
    it is the only input.  Used for purposes of transitive parameter
-   splitting.  */
+   splitting.  Return true on success, false if the param flow already has
+   a different source (which can happen for functions created by IPA passes
+   between the IPA-SRA summary generation and execute phases).  */
 
-static void
+static bool
 set_single_param_flow_source (isra_param_flow *param_flow, int src)
 {
   gcc_checking_assert (src >= 0 && src <= UCHAR_MAX);
@@ -893,11 +895,16 @@ set_single_param_flow_source (isra_param_flow *param_flow, int src)
     {
       param_flow->inputs[0] = src;
       param_flow->length = 1;
+      return true;
     }
   else if (param_flow->length == 1)
-    gcc_assert (param_flow->inputs[0] == src);
+    {
+      if (param_flow->inputs[0] == src)
+	return true;
+      return false;
+    }
   else
-    gcc_unreachable ();
+    return false;
 }
 
 /* Assert that there is only a single value in PARAM_FLOW's inputs and return
@@ -1147,8 +1154,13 @@ ptr_parm_has_nonarg_uses (cgraph_node *node, function *fun, tree parm,
 		  /* TODO: Allow &MEM_REF[name + offset] here,
 		     ipa_param_body_adjustments::modify_call_stmt has to be
 		     adjusted too.  */
+		  if (!set_single_param_flow_source (&csum->m_arg_flow[i],
+						     parm_num))
+		    {
+		      ret = true;
+		      break;
+		    }
 		  csum->m_arg_flow[i].pointer_pass_through = true;
-		  set_single_param_flow_source (&csum->m_arg_flow[i], parm_num);
 		  pt_count++;
 		  uses_ok++;
 		  continue;
@@ -1774,8 +1786,9 @@ record_nonregister_call_use (gensum_param_desc *desc,
   csum->init_inputs (call_info->argument_count);
 
   isra_param_flow *param_flow = &csum->m_arg_flow[call_info->arg_idx];
+  if (!set_single_param_flow_source (param_flow, desc->param_number))
+    return;
   param_flow->aggregate_pass_through = true;
-  set_single_param_flow_source (param_flow, desc->param_number);
   param_flow->unit_offset = unit_offset;
   param_flow->unit_size = unit_size;
   desc->call_uses++;
@@ -2617,8 +2630,12 @@ process_scan_results (cgraph_node *node, struct function *fun,
 	csum->m_before_any_store = uses_memory_as_obtained;
 	for (unsigned argidx = 0; argidx < count; argidx++)
 	  {
-	    if (!csum->m_arg_flow[argidx].pointer_pass_through)
-	      continue;
+	    if (!csum->m_arg_flow[argidx].pointer_pass_through
+		|| csum->m_arg_flow[argidx].length != 1)
+	      {
+		csum->m_arg_flow[argidx].pointer_pass_through = false;
+		continue;
+	      }
 	    unsigned pidx
 	      = get_single_param_flow_source (&csum->m_arg_flow[argidx]);
 	    gensum_param_desc *desc = &(*param_descriptions)[pidx];
@@ -3364,7 +3381,7 @@ process_edge_to_unknown_caller (cgraph_edge *cs)
     {
       isra_param_flow *ipf = &csum->m_arg_flow[i];
 
-     if (ipf->pointer_pass_through)
+     if (ipf->pointer_pass_through && ipf->length == 1)
        {
          isra_param_desc *param_desc
            = &(*from_ifs->m_parameters)[get_single_param_flow_source (ipf)];
@@ -3372,7 +3389,9 @@ process_edge_to_unknown_caller (cgraph_edge *cs)
          param_desc->split_candidate = false;
         continue;
        }
-      if (ipf->aggregate_pass_through)
+      if (ipf->pointer_pass_through)
+	ipf->pointer_pass_through = false;
+      if (ipf->aggregate_pass_through && ipf->length == 1)
 	{
 	  unsigned idx = get_single_param_flow_source (ipf);
 	  isra_param_desc *param_desc = &(*from_ifs->m_parameters)[idx];
@@ -3557,7 +3576,7 @@ propagate_param_hints_accross_call (cgraph_edge *cs, isra_func_summary *to_ifs)
 	  if (!ipf->constructed_for_calls)
 	    desc->not_specially_constructed = true;
 
-	  if (ipf->pointer_pass_through)
+	  if (ipf->pointer_pass_through && ipf->length == 1)
 	    {
 	      isra_func_summary *from_ifs = func_sums->get (cs->caller);
 	      int srcidx = get_single_param_flow_source (ipf);
@@ -3874,7 +3893,7 @@ param_splitting_across_edge (cgraph_edge *cs)
 	  continue;
 	}
 
-      if (ipf->pointer_pass_through)
+      if (ipf->pointer_pass_through && ipf->length == 1)
 	{
 	  int idx = get_single_param_flow_source (ipf);
 	  isra_param_desc *param_desc = &(*from_ifs->m_parameters)[idx];
@@ -3937,7 +3956,7 @@ param_splitting_across_edge (cgraph_edge *cs)
 		}
 	    }
 	}
-      else if (ipf->aggregate_pass_through)
+      else if (ipf->aggregate_pass_through && ipf->length == 1)
 	{
 	  int idx = get_single_param_flow_source (ipf);
 	  isra_param_desc *param_desc = &(*from_ifs->m_parameters)[idx];
@@ -4021,7 +4040,8 @@ param_splitting_across_edge (cgraph_edge *cs)
     {
       isra_param_flow *ipf = &csum->m_arg_flow[i];
 
-      if (ipf->pointer_pass_through || ipf->aggregate_pass_through)
+      if ((ipf->pointer_pass_through || ipf->aggregate_pass_through)
+	  && ipf->length == 1)
 	{
 	  int idx = get_single_param_flow_source (ipf);
 	  ipf->pointer_pass_through = false;

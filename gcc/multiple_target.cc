@@ -305,6 +305,17 @@ expand_target_clones (struct cgraph_node *node, bool definition,
     {
       auto it = clone_map.find (IDENTIFIER_POINTER (
 				DECL_ASSEMBLER_NAME_RAW (node->decl)));
+      /* Also try DECL_NAME for Fortran module functions where the JSON
+	 profile may use the short name (e.g., "rhs3d_tile") while the
+	 assembler name is mangled (e.g., "__rhs3d_mod_MOD_rhs3d_tile").
+	 Skip nested/contained functions (decl_function_context != NULL)
+	 because ifunc dispatch does not support static chains.
+	 Skip clones (clone_of != NULL) to avoid expanding IPA-generated
+	 clones that were derived from the original function.  */
+      if (it == clone_map.end () && DECL_NAME (node->decl)
+	  && !decl_function_context (node->decl)
+	  && !node->clone_of)
+	it = clone_map.find (IDENTIFIER_POINTER (DECL_NAME (node->decl)));
       if (it != clone_map.end () && node_versionable_function_p (node))
 	{
 	  /* Merge valid target attributes from -ftarget-clones-table.  */
@@ -693,20 +704,32 @@ init_clone_map (void)
 static unsigned int
 ipa_target_clone (bool early)
 {
-  static bool non_early_target_clones_table_done = false;
+  static int non_early_pass_count = 0;
   struct cgraph_node *node;
   auto_vec<cgraph_node *> to_dispatch;
   std::map <std::string, auto_vec<string_slice> > clone_map
     = init_clone_map ();
 
-  /* With -ftarget-clones-table enabled, pass_target_clone(false) can be
-     scheduled more than once in the pipeline.  Keep the first non-early run
-     and skip the later one to avoid duplicate late rewrites.  */
+  /* With -ftarget-clones-table enabled, pass_target_clone(false) is scheduled
+     twice:
+       1. Before IPA-SRA: expand all target_clones (annotation and table-based).
+       2. After IPA-SRA: dispatch ISRA-generated FMV clones.  */
+  bool process_table = false;
   if (!early && target_clones_table)
     {
-      if (non_early_target_clones_table_done)
-        return 0;
-      non_early_target_clones_table_done = true;
+      non_early_pass_count++;
+      if (non_early_pass_count == 1)
+	{
+	  /* First non-early: expand all FMV.  */
+	  process_table = true;
+	}
+      else if (non_early_pass_count == 2)
+	{
+	  /* Second non-early (after IPA-SRA): ISRA dispatch only.  */
+	  process_table = false;
+	}
+      else
+	return 0;
     }
 
   /* Don't need to do anything early for target attribute semantics.  */
@@ -738,6 +761,27 @@ ipa_target_clone (bool early)
     {
       /* In the early stage, we need to expand any target clone that is not
 	 the simple case.  Simple cases are dispatched in the later stage.  */
+
+      /* For table-based FMV, defer expansion to the second non-early pass
+	 (after IPA-CP/IPA-SRA) so IPA optimizations can create constprop
+	 and ISRA clones of the original function first.  */
+      if (target_clones_table && !process_table && !early)
+	{
+	  bool found_in_table = false;
+	  if (DECL_INITIAL (node->decl))
+	    {
+	      auto it = clone_map.find (
+		IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME_RAW (node->decl)));
+	      if (it == clone_map.end () && DECL_NAME (node->decl)
+		  && !decl_function_context (node->decl)
+		  && !node->clone_of)
+		it = clone_map.find (
+		  IDENTIFIER_POINTER (DECL_NAME (node->decl)));
+	      found_in_table = (it != clone_map.end ());
+	    }
+	  if (found_in_table)
+	    continue;
+	}
 
       if (early == !is_simple_target_clones_case (node))
 	if (expand_target_clones (node, node->definition, clone_map)
@@ -804,6 +848,26 @@ ipa_target_clone (bool early)
 
   FOR_EACH_FUNCTION (node)
     redirect_to_specific_clone (node);
+
+  /* Sweep all functions and clear gimple modified flags that may have been
+     left by prior IPA passes (e.g. IPA-SRA's modify_call).  The IPA_PASS
+     execute phases do not run per-function TODO cleanup, so modified stmts
+     can persist until a SIMPLE_IPA_PASS triggers verify_ssa.  */
+  FOR_EACH_FUNCTION_WITH_GIMPLE_BODY (node)
+    {
+      function *fn = DECL_STRUCT_FUNCTION (node->decl);
+      if (!fn)
+	continue;
+      basic_block bb;
+      FOR_EACH_BB_FN (bb, fn)
+	for (gimple_stmt_iterator gsi = gsi_start_bb (bb); !gsi_end_p (gsi);
+	     gsi_next (&gsi))
+	  {
+	    gimple *stmt = gsi_stmt (gsi);
+	    if (gimple_modified_p (stmt))
+	      update_stmt_fn (fn, stmt);
+	  }
+    }
 
   return 0;
 }

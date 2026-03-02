@@ -719,6 +719,43 @@ ix86_can_inline_p (tree caller, tree callee)
 
   return ret;
 }
+
+/* Implement TARGET_OPTION_FUNCTIONS_B_RESOLVABLE_FROM_A for x86.
+   Return true if DECL_B's ISA feature requirements are a subset of
+   DECL_A's, meaning DECL_B can safely execute whenever DECL_A can.
+   This enables redirect_to_specific_clone to statically resolve FMV
+   calls when the caller and callee have different version targets
+   (e.g., a v3 caller can resolve a v3 callee, and a v4 machine running
+   a v3 caller version implies a v3 callee version is also safe).  */
+
+static bool
+ix86_functions_b_resolvable_from_a (tree decl_a, tree decl_b,
+				    tree base ATTRIBUTE_UNUSED)
+{
+  tree opts_a = DECL_FUNCTION_SPECIFIC_TARGET (decl_a);
+  tree opts_b = DECL_FUNCTION_SPECIFIC_TARGET (decl_b);
+
+  if (!opts_a)
+    opts_a = target_option_default_node;
+  if (!opts_b)
+    opts_b = target_option_default_node;
+
+  if (opts_a == opts_b)
+    return true;
+
+  struct cl_target_option *a = TREE_TARGET_OPTION (opts_a);
+  struct cl_target_option *b = TREE_TARGET_OPTION (opts_b);
+
+  /* Check if B's ISA features are a subset of A's.  A machine that can
+     execute code compiled for A's feature set can also execute code compiled
+     for B's feature set if B's features are all present in A.  */
+  if ((a->x_ix86_isa_flags & b->x_ix86_isa_flags) != b->x_ix86_isa_flags)
+    return false;
+  if ((a->x_ix86_isa_flags2 & b->x_ix86_isa_flags2) != b->x_ix86_isa_flags2)
+    return false;
+
+  return true;
+}
 
 /* Return true if this goes in large data/bss.  */
 
@@ -28148,6 +28185,10 @@ static const scoped_attribute_specs *const ix86_attribute_table[] =
 
 #undef TARGET_COMPARE_VERSION_PRIORITY
 #define TARGET_COMPARE_VERSION_PRIORITY ix86_compare_version_priority
+
+#undef TARGET_OPTION_FUNCTIONS_B_RESOLVABLE_FROM_A
+#define TARGET_OPTION_FUNCTIONS_B_RESOLVABLE_FROM_A \
+  ix86_functions_b_resolvable_from_a
 
 #undef TARGET_GENERATE_VERSION_DISPATCHER_BODY
 #define TARGET_GENERATE_VERSION_DISPATCHER_BODY \

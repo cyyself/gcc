@@ -1104,6 +1104,8 @@ cgraph_node::create_version_clone (tree new_decl,
    new_version->unit_id = unit_id;
    new_version->merged_comdat = merged_comdat;
    new_version->merged_extern_inline = merged_extern_inline;
+   new_version->versionable = versionable;
+   new_version->can_change_signature = can_change_signature;
 
    for (e = callees; e; e=e->next_callee)
      if (!bbs_to_copy

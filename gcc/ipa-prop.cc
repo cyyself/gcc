@@ -3207,12 +3207,18 @@ ipa_analyze_call_uses (struct ipa_func_body_info *fbi, gcall *call)
     {
       tree instance;
       tree target = gimple_call_fn (call);
+
+      /* When FMV clones are created after IPA passes have already run
+	 (e.g. deferred target_clones expansion), the edge's polymorphic
+	 info may be stale or inconsistent with the cloned body.  Skip
+	 the analysis rather than asserting.  */
+      if (pii->otr_type != obj_type_ref_class (target)
+	  || pii->otr_token
+	     != tree_to_shwi (OBJ_TYPE_REF_TOKEN (target)))
+	goto non_polymorphic;
+
       ipa_polymorphic_call_context context (current_function_decl,
 					    target, call, &instance);
-
-      gcc_checking_assert (pii->otr_type == obj_type_ref_class (target));
-      gcc_checking_assert (pii->otr_token
-			   == tree_to_shwi (OBJ_TYPE_REF_TOKEN (target)));
 
       pii->vptr_changed
 	= !context.get_dynamic_type (instance,
@@ -3222,6 +3228,7 @@ ipa_analyze_call_uses (struct ipa_func_body_info *fbi, gcall *call)
       pii->context = context;
     }
 
+ non_polymorphic:
   if (TREE_CODE (target) == SSA_NAME)
     ipa_analyze_indirect_call_uses (fbi, call, target);
   else if (virtual_method_call_p (target))

@@ -658,6 +658,14 @@ ipa_propagate_frequency (struct cgraph_node *node)
       || (opt_for_fn (node->decl, flag_devirtualize)
 	  && DECL_VIRTUAL_P (node->decl)))
     return false;
+
+  /* FMV versioned functions are called indirectly through a resolver/ifunc
+     dispatcher rather than through direct call edges.  Do not propagate
+     frequency based on (missing) direct callers, as that would incorrectly
+     mark them as unlikely executed.  */
+  if (node->function_version ()
+      && !node->dispatcher_function)
+    return false;
   gcc_assert (node->analyzed);
   if (dump_file && (dump_flags & TDF_DETAILS))
     fprintf (dump_file, "Processing frequency %s\n", node->dump_name ());
