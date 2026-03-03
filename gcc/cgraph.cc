@@ -3784,7 +3784,22 @@ cgraph_edge::verify_corresponds_to_fndecl (tree decl)
   if (callee->former_clone_of != node->decl
       && (node != callee->ultimate_alias_target ())
       && !clone_of_p (node, callee))
-    return true;
+    {
+      /* When IPA passes (IPA-CP, IPA-SRA) create virtual clones and
+	 redirect callers independently, a call stmt's fndecl may reference
+	 a different clone's DECL than the cgraph edge callee, because
+	 virtual clones share gimple bodies.  For FMV (Function
+	 Multi-Versioning) functions, multiple clones (constprop, ISRA,
+	 version clones) all derive from the same original function.
+	 Accept the edge if both the stmt's fndecl and the callee's decl
+	 share the same DECL_ABSTRACT_ORIGIN, confirming they are clones
+	 of the same source function.  */
+      tree origin1 = DECL_ABSTRACT_ORIGIN (decl);
+      tree origin2 = DECL_ABSTRACT_ORIGIN (callee->decl);
+      if (origin1 && origin2 && origin1 == origin2)
+	return false;
+      return true;
+    }
   else
     return false;
 }

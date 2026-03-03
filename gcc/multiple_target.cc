@@ -511,20 +511,7 @@ redirect_to_specific_clone (cgraph_node *node)
       cgraph_function_version_info *caller_v
 	= e->caller->function_version ();
 
-      if (!callee_v)
-	continue;
-
-      /* IPA clones (constprop, ISRA) aren't in the version chain but inherit
-	 the target-specific attributes of their FMV parent.  Walk the clone_of
-	 chain to find the original version function's version info so that the
-	 redirect resolution logic can reason about the caller's ISA level.  */
-      if (!caller_v)
-	for (cgraph_node *n = e->caller->clone_of; n; n = n->clone_of)
-	  {
-	    caller_v = n->function_version ();
-	    if (caller_v)
-	      break;
-	  }
+      gcc_assert (callee_v);
 
       /* Find the default nodes for both callee and caller (if present).  */
       cgraph_function_version_info *callee_default_v = callee_v->next;

@@ -1287,9 +1287,8 @@ cgraph_node::materialize_clone ()
 {
   clone_info *info = clone_info::get (this);
   clone_of->get_untransformed_body ();
-  former_clone_of = clone_of->decl;
-  if (clone_of->former_clone_of)
-    former_clone_of = clone_of->former_clone_of;
+  former_clone_of = clone_of->former_clone_of
+		    ? clone_of->former_clone_of : clone_of->decl;
   if (symtab->dump_file)
     {
       fprintf (symtab->dump_file, "cloning %s to %s\n",
