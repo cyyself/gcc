@@ -4514,15 +4514,24 @@ adjust_parameter_descriptions (cgraph_node *node, isra_func_summary *ifs)
 
       if (desc->split_candidate && desc->conditionally_dereferenceable)
 	{
-	  gcc_assert (desc->safe_size_set);
-	  for (param_access *pa : *desc->accesses)
-	    if ((pa->unit_offset + pa->unit_size) > desc->safe_size)
-	      {
-		if (dump_file && (dump_flags & TDF_DETAILS))
-		  dump_bad_cond_indices.safe_push (i);
-		desc->split_candidate = false;
-		break;
-	      }
+	  if (!desc->safe_size_set)
+	    {
+	      /* For FMV functions whose callers are unknown (e.g. called only
+		 through dispatchers), safe_size may never be propagated.
+		 Conservatively disable splitting in that case.  */
+	      desc->split_candidate = false;
+	      if (dump_file && (dump_flags & TDF_DETAILS))
+		dump_bad_cond_indices.safe_push (i);
+	    }
+	  else
+	    for (param_access *pa : *desc->accesses)
+	      if ((pa->unit_offset + pa->unit_size) > desc->safe_size)
+		{
+		  if (dump_file && (dump_flags & TDF_DETAILS))
+		    dump_bad_cond_indices.safe_push (i);
+		  desc->split_candidate = false;
+		  break;
+		}
 	}
 
       if (desc->split_candidate)
