@@ -151,6 +151,14 @@ object_allocator<ipcp_agg_lattice> ipcp_agg_lattice_pool
 
 static long overall_size, orig_overall_size;
 
+/* Total size growth from constprop clones of FMV version nodes.  This is
+   added to the max allowed overall size to ensure each FMV version gets
+   the same constprop budget as the function would in a non-FMV build.
+   Without this, the first-processed FMV version consumes the shared
+   budget, starving sibling versions of their constprop clones.  */
+
+static long fmv_constprop_growth;
+
 /* The maximum number of IPA-CP decision sweeps that any node requested in its
    param.  */
 static int max_number_sweeps;
@@ -3639,6 +3647,16 @@ get_max_overall_size (cgraph_node *node, int cur_sweep)
   int unit_growth = opt_for_fn (node->decl, param_ipa_cp_unit_growth);
   max_new_size += ((max_new_size * unit_growth * cur_sweep)
 		   / num_sweeps) / 100 + 1;
+
+  /* Increase budget by the size of constprop clones already created for
+     FMV version nodes.  FMV versions are copies of the same function for
+     different ISA levels; each version needs the same constprop clones
+     (e.g. for self-recursive unrolling) but their sizes were excluded from
+     orig_overall_size.  Without this adjustment, the first version's
+     constprop clones exhaust the budget, preventing sibling versions from
+     getting their needed clones.  */
+  max_new_size += fmv_constprop_growth;
+
   return max_new_size;
 }
 
@@ -6105,9 +6123,20 @@ decide_about_value (struct cgraph_node *node, int index, HOST_WIDE_INT offset,
 
   callers.release ();
   overall_size += val->local_size_cost;
+
+  /* Track constprop growth from FMV version nodes so the budget can be
+     increased to accommodate sibling versions' constprop clones.  */
+  {
+    cgraph_function_version_info *vinfo = node->function_version ();
+    if (vinfo && !node->dispatcher_function
+	&& !is_function_default_version (node->decl))
+      fmv_constprop_growth += val->local_size_cost;
+  }
+
   if (dump_file && (dump_flags & TDF_DETAILS))
-    fprintf (dump_file, "     overall size reached %li\n",
-	     overall_size);
+    fprintf (dump_file, "     overall size reached %li"
+	     " (fmv_constprop_growth: %li)\n",
+	     overall_size, fmv_constprop_growth);
 
   /* TODO: If for some lattice there is only one other known value
      left, make a special node for it too. */
@@ -6364,6 +6393,13 @@ decide_whether_version_node (struct cgraph_node *node, int cur_sweep)
 
 	      do_clone_for_all_contexts = true;
 	      overall_size += size;
+	      {
+		cgraph_function_version_info *vinfo
+		  = node->function_version ();
+		if (vinfo && !node->dispatcher_function
+		    && !is_function_default_version (node->decl))
+		  fmv_constprop_growth += size;
+	      }
 	      if (dump_file)
 		fprintf (dump_file, "   Decided to specialize for all "
 			 "known contexts, growth (to %li) deemed "
@@ -6896,6 +6932,7 @@ ipa_cp_cc_finalize (void)
 {
   overall_size = 0;
   orig_overall_size = 0;
+  fmv_constprop_growth = 0;
   ipcp_free_transformation_sum ();
 }
 
