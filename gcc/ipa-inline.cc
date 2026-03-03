@@ -1264,13 +1264,31 @@ want_inline_function_to_all_callers_p (struct cgraph_node *node, bool cold)
     return false;
   /* Inlining into all callers would increase size?  */
   if (growth_positive_p (node, NULL, INT_MIN) > 0)
-    return false;
+    {
+      if (dump_file)
+	fprintf (dump_file, "  want_inline_all_callers: %s/%d REJECTED by growth_positive_p\n",
+		 node->dump_name (), node->order);
+      return false;
+    }
   /* All inlines must be possible.  */
   if (node->call_for_symbol_and_aliases (check_callers, &has_hot_call,
 					 true))
-    return false;
+    {
+      if (dump_file)
+	fprintf (dump_file, "  want_inline_all_callers: %s/%d REJECTED by check_callers\n",
+		 node->dump_name (), node->order);
+      return false;
+    }
   if (!cold && !has_hot_call)
-    return false;
+    {
+      if (dump_file)
+	fprintf (dump_file, "  want_inline_all_callers: %s/%d REJECTED no hot call (cold=%d)\n",
+		 node->dump_name (), node->order, cold);
+      return false;
+    }
+  if (dump_file)
+    fprintf (dump_file, "  want_inline_all_callers: %s/%d ACCEPTED\n",
+	     node->dump_name (), node->order);
   return true;
 }
 
@@ -2055,6 +2073,17 @@ resolve_noninline_speculation (edge_heap_t *edge_heap, struct cgraph_edge *edge)
 bool
 inline_account_function_p (struct cgraph_node *node)
 {
+   /* For FMV builds, don't count non-default version functions in the
+      unit size.  FMV version clones are copies of the same function
+      compiled for different ISA levels; counting them all inflates the
+      unit size and reduces the inlining budget.  Only count the default
+      version's size per FMV group so the inliner budget remains comparable
+      to non-FMV builds.  */
+   cgraph_function_version_info *vinfo = node->function_version ();
+   if (vinfo && !node->dispatcher_function
+       && !is_function_default_version (node->decl))
+     return false;
+
    return (!DECL_EXTERNAL (node->decl)
 	   && !opt_for_fn (node->decl, optimize_size)
 	   && node->frequency != NODE_FREQUENCY_UNLIKELY_EXECUTED);
@@ -2128,7 +2157,26 @@ inline_small_functions (void)
 	    /* Do not account external functions, they will be optimized out
 	       if not inlined.  Also only count the non-cold portion of program.  */
 	    if (inline_account_function_p (node))
-	      initial_size += ipa_size_summaries->get (node)->size;
+	      {
+		initial_size += ipa_size_summaries->get (node)->size;
+		if (dump_file)
+		  fprintf (dump_file, "  inline_account: COUNTED %s/%d size=%d (initial_size=%d)\n",
+			   node->name (), node->order,
+			   ipa_size_summaries->get (node)->size, initial_size);
+	      }
+	    else if (dump_file)
+	      {
+		cgraph_function_version_info *vinfo = node->function_version ();
+		fprintf (dump_file, "  inline_account: SKIPPED %s/%d size=%d fv=%d disp=%d defver=%d ext=%d optsize=%d freq=%d\n",
+			 node->name (), node->order,
+			 ipa_size_summaries->get (node)->size,
+			 vinfo != NULL,
+			 node->dispatcher_function,
+			 is_function_default_version (node->decl),
+			 DECL_EXTERNAL (node->decl),
+			 opt_for_fn (node->decl, optimize_size),
+			 node->frequency);
+	      }
 	    info->growth = estimate_growth (node);
 
 	    int num_calls = 0;

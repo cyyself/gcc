@@ -451,13 +451,13 @@ determine_versionability (struct cgraph_node *node,
 	 coexist, but that may not be worth the effort.  */
       reason = "function has SIMD clones";
     }
-  else if (lookup_attribute ("target_clones", DECL_ATTRIBUTES (node->decl)))
-    {
-      /* Ideally we should clone the target clones themselves and create
-	 copies of them, so IPA-cp and target clones can happily
-	 coexist, but that may not be worth the effort.  */
-      reason = "function target_clones attribute";
-    }
+  /* Note: we intentionally allow IPA-CP to clone functions with
+     target_clones attribute.  When table-based FMV is in use
+     (-ftarget-clones-table), the target_clone pass defers expansion
+     of table-based entries until after IPA-CP and IPA-SRA, so IPA-CP
+     constprop clones inherit the target_clones attribute and get
+     FMV-expanded later.  This enables both constant propagation and
+     FMV ISA-specific optimization in the same function.  */
   /* Don't clone decls local to a comdat group; it breaks and for C++
      decloned constructors, inlining is always better anyway.  */
   else if (node->comdat_local_p ())
@@ -4103,7 +4103,34 @@ ipcp_propagate_stage (class ipa_topo_info *topo)
       }
     ipa_size_summary *s = ipa_size_summaries->get (node);
     if (node->definition && !node->alias && s != NULL)
-      overall_size += s->self_size;
+      {
+	/* For FMV builds, don't count non-default version functions in
+	   overall_size.  FMV version clones are copies of the same function
+	   compiled for different ISA levels; counting them all inflates the
+	   unit size and starves IPA-CP of its optimization budget for
+	   creating specialization clones (e.g. constprop chains for recursive
+	   functions).  Only count the default version's size per FMV group
+	   to keep the budget comparable to non-FMV builds.  */
+	cgraph_function_version_info *vinfo = node->function_version ();
+	if (vinfo && !node->dispatcher_function
+	    && !is_function_default_version (node->decl))
+	  {
+	    if (dump_file)
+	      fprintf (dump_file, "Skipping FMV version %s (size %d) "
+		       "from overall_size\n",
+		       node->dump_name (), s->self_size);
+	  }
+	else
+	  {
+	    if (dump_file && vinfo)
+	      fprintf (dump_file, "Counting FMV node %s (size %d, "
+		       "dispatcher=%d, default=%d) in overall_size\n",
+		       node->dump_name (), s->self_size,
+		       node->dispatcher_function ? 1 : 0,
+		       is_function_default_version (node->decl) ? 1 : 0);
+	    overall_size += s->self_size;
+	  }
+      }
   }
 
   orig_overall_size = overall_size;

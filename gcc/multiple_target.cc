@@ -25,6 +25,7 @@ along with GCC; see the file COPYING3.  If not see
 #define INCLUDE_MAP
 #define INCLUDE_STRING
 #define INCLUDE_SSTREAM
+#define INCLUDE_VECTOR
 #include "system.h"
 #include "coretypes.h"
 #include "backend.h"
@@ -510,7 +511,20 @@ redirect_to_specific_clone (cgraph_node *node)
       cgraph_function_version_info *caller_v
 	= e->caller->function_version ();
 
-      gcc_assert (callee_v);
+      if (!callee_v)
+	continue;
+
+      /* IPA clones (constprop, ISRA) aren't in the version chain but inherit
+	 the target-specific attributes of their FMV parent.  Walk the clone_of
+	 chain to find the original version function's version info so that the
+	 redirect resolution logic can reason about the caller's ISA level.  */
+      if (!caller_v)
+	for (cgraph_node *n = e->caller->clone_of; n; n = n->clone_of)
+	  {
+	    caller_v = n->function_version ();
+	    if (caller_v)
+	      break;
+	  }
 
       /* Find the default nodes for both callee and caller (if present).  */
       cgraph_function_version_info *callee_default_v = callee_v->next;
@@ -709,6 +723,66 @@ ipa_target_clone (bool early)
   auto_vec<cgraph_node *> to_dispatch;
   std::map <std::string, auto_vec<string_slice> > clone_map
     = init_clone_map ();
+
+  /* Unify FMV version sets across functions in the current translation unit.
+     When function A (with e.g. v3) calls function B (with e.g. v4),
+     redirect_to_specific_clone cannot resolve the cross-FMV call because v3
+     does not guarantee v4.  By giving both A and B the union {v3, v4},
+     each caller version can be redirected to the corresponding callee version
+     directly, enabling IPA-CP constant propagation and inliner specialization
+     across FMV boundaries.  Only functions present in the current TU are
+     considered, to avoid bloating unrelated functions from other TUs.  */
+  if (!clone_map.empty () && !early)
+    {
+      /* Collect the union of versions from clone_map entries that match
+	 functions defined in this TU.  We use std::vector instead of
+	 auto_vec for tu_symbols because auto_vec uses xrealloc (raw
+	 memcpy) which corrupts std::string's small-buffer optimization.  */
+      auto_vec<string_slice> tu_versions;
+      std::vector<std::string> tu_symbols;
+      FOR_EACH_FUNCTION (node)
+	{
+	  if (!DECL_INITIAL (node->decl))
+	    continue;
+	  const char *asm_name
+	    = IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME_RAW (node->decl));
+	  auto it = clone_map.find (asm_name);
+	  if (it == clone_map.end () && DECL_NAME (node->decl)
+	      && !decl_function_context (node->decl)
+	      && !node->clone_of)
+	    it = clone_map.find (
+	      IDENTIFIER_POINTER (DECL_NAME (node->decl)));
+	  if (it == clone_map.end ())
+	    continue;
+	  tu_symbols.push_back (it->first);
+	  for (const string_slice &v : it->second)
+	    {
+	      bool found = false;
+	      for (const string_slice &existing : tu_versions)
+		if (v == existing)
+		  { found = true; break; }
+	      if (!found)
+		tu_versions.safe_push (v);
+	    }
+	}
+      /* Add missing versions to each TU function's clone_map entry.  */
+      if (tu_versions.length () > 1)
+	for (const std::string &sym : tu_symbols)
+	  {
+	    auto it = clone_map.find (sym);
+	    if (it == clone_map.end ())
+	      continue;
+	    for (const string_slice &v : tu_versions)
+	      {
+		bool found = false;
+		for (const string_slice &existing : it->second)
+		  if (v == existing)
+		    { found = true; break; }
+		if (!found)
+		  it->second.safe_push (v);
+	      }
+	  }
+    }
 
   /* With -ftarget-clones-table enabled, pass_target_clone(false) is scheduled
      twice:

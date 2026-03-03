@@ -422,6 +422,16 @@ do_estimate_growth_1 (struct cgraph_node *node, void *data)
       if (e->callback)
 	continue;
 
+      /* Skip callers that are effectively dead code — kept only by
+	 force_output but never actually called.  This includes FMV
+	 originals superseded by ISRA clones whose address_taken is
+	 from the FMV dispatcher.  */
+      if (e->caller->force_output
+	  && !e->caller->callers
+	  && (!e->caller->address_taken
+	      || DECL_FUNCTION_VERSIONED (e->caller->decl)))
+	continue;
+
       if (cgraph_inline_failed_type (e->inline_failed) == CIF_FINAL_ERROR
 	  || !opt_for_fn (e->caller->decl, optimize))
 	{
@@ -456,14 +466,19 @@ offline_size (struct cgraph_node *node, ipa_size_summary *info)
       if (node->will_be_removed_from_program_if_no_direct_calls_p ())
 	return info->size;
       /* COMDAT functions are very often not shared across multiple units
-         since they come from various template instantiations.
-         Take this into account.  */
+	 since they come from various template instantiations.
+	 Take this into account.  */
       else if (DECL_COMDAT (node->decl)
 	       && node->can_remove_if_no_direct_calls_p ())
 	{
 	  int prob = opt_for_fn (node->decl, param_comdat_sharing_probability);
 	  return (info->size * (100 - prob) + 50) / 100;
 	}
+      else if (dump_file)
+	fprintf (dump_file, "  offline_size: %s/%d returns 0:"
+		 " force_output=%d ext=%d\n",
+		 node->dump_name (), node->order,
+		 node->force_output, DECL_EXTERNAL (node->decl));
     }
   return 0;
 }
@@ -508,6 +523,12 @@ check_callers (cgraph_node *node, int *growth, int *n, int offline,
 
       if (e == known_edge)
 	continue;
+      /* Skip dead callers kept only by force_output.  */
+      if (e->caller->force_output
+	  && !e->caller->callers
+	  && (!e->caller->address_taken
+	      || DECL_FUNCTION_VERSIONED (e->caller->decl)))
+	continue;
       if (cgraph_inline_failed_type (e->inline_failed) == CIF_FINAL_ERROR)
 	return true;
       if (edge_growth_cache != NULL
@@ -551,6 +572,11 @@ growth_positive_p (struct cgraph_node *node,
 
   /* First quickly check if NODE is removable at all.  */
   int offline = offline_size (node, s);
+  if (dump_file)
+    fprintf (dump_file, "  growth_positive_p: %s/%d offline=%d size=%d"
+	     " known_edge=%p edge_growth=%d\n",
+	     node->dump_name (), node->order, offline,
+	     s ? s->size : -1, (void *)known_edge, edge_growth);
   if (offline <= 0 && known_edge && edge_growth > 0)
     return true;
 
@@ -562,6 +588,12 @@ growth_positive_p (struct cgraph_node *node,
     {
       edge_growth_cache_entry *entry;
 
+      /* Skip dead callers kept only by force_output.  */
+      if (e->caller->force_output
+	  && !e->caller->callers
+	  && (!e->caller->address_taken
+	      || DECL_FUNCTION_VERSIONED (e->caller->decl)))
+	continue;
       if (cgraph_inline_failed_type (e->inline_failed) == CIF_FINAL_ERROR)
 	return true;
       if (e == known_edge)
@@ -592,8 +624,26 @@ growth_positive_p (struct cgraph_node *node,
 
   struct growth_data d = { node, false, false, 0, offline };
   if (node->call_for_symbol_and_aliases (do_estimate_growth_1, &d, true))
-    return true;
+    {
+      if (dump_file)
+	fprintf (dump_file, "  growth_positive_p: %s/%d call_for_symbol TRUE"
+		 " d.growth=%d min_growth=%d\n",
+		 node->dump_name (), node->order, d.growth, min_growth);
+      return true;
+    }
   if (d.self_recursive || d.uninlinable)
-    return true;
+    {
+      if (dump_file)
+	fprintf (dump_file, "  growth_positive_p: %s/%d self_recursive=%d"
+		 " uninlinable=%d\n",
+		 node->dump_name (), node->order,
+		 d.self_recursive, d.uninlinable);
+      return true;
+    }
+  if (dump_file)
+    fprintf (dump_file, "  growth_positive_p: %s/%d final d.growth=%d"
+	     " offline=%d result=%s\n",
+	     node->dump_name (), node->order, d.growth, offline,
+	     (d.growth > offline) ? "POSITIVE" : "NEGATIVE");
   return (d.growth > offline);
 }
