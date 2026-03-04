@@ -422,16 +422,6 @@ do_estimate_growth_1 (struct cgraph_node *node, void *data)
       if (e->callback)
 	continue;
 
-      /* Skip callers that are effectively dead code — kept only by
-	 force_output but never actually called.  This includes FMV
-	 originals superseded by ISRA clones whose address_taken is
-	 from the FMV dispatcher.  */
-      if (e->caller->force_output
-	  && !e->caller->callers
-	  && (!e->caller->address_taken
-	      || DECL_FUNCTION_VERSIONED (e->caller->decl)))
-	continue;
-
       if (cgraph_inline_failed_type (e->inline_failed) == CIF_FINAL_ERROR
 	  || !opt_for_fn (e->caller->decl, optimize))
 	{
@@ -523,12 +513,6 @@ check_callers (cgraph_node *node, int *growth, int *n, int offline,
 
       if (e == known_edge)
 	continue;
-      /* Skip dead callers kept only by force_output.  */
-      if (e->caller->force_output
-	  && !e->caller->callers
-	  && (!e->caller->address_taken
-	      || DECL_FUNCTION_VERSIONED (e->caller->decl)))
-	continue;
       if (cgraph_inline_failed_type (e->inline_failed) == CIF_FINAL_ERROR)
 	return true;
       if (edge_growth_cache != NULL
@@ -588,12 +572,6 @@ growth_positive_p (struct cgraph_node *node,
     {
       edge_growth_cache_entry *entry;
 
-      /* Skip dead callers kept only by force_output.  */
-      if (e->caller->force_output
-	  && !e->caller->callers
-	  && (!e->caller->address_taken
-	      || DECL_FUNCTION_VERSIONED (e->caller->decl)))
-	continue;
       if (cgraph_inline_failed_type (e->inline_failed) == CIF_FINAL_ERROR)
 	return true;
       if (e == known_edge)

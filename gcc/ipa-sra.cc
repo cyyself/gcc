@@ -4287,8 +4287,13 @@ process_isra_node_results (cgraph_node *node,
   if (!ifs || !ifs->m_candidate)
     return;
 
-  bool fmv_candidate = (node->function_version () != NULL
-			|| DECL_FUNCTION_VERSIONED (node->decl));
+  /* Only treat nodes with actual FMV version info as FMV candidates.
+     Clones (e.g. constprop) of FMV versions inherit DECL_FUNCTION_VERSIONED
+     via copy_node but do not have function_version () set.  Treating them
+     as FMV candidates would create no-signature ISRA clones that inherit
+     the parent's param_adjustments (via create_clone), leading to
+     prev_clone_index out-of-bounds during materialization.  */
+  bool fmv_candidate = (node->function_version () != NULL);
   bool allow_no_signature_clone = fmv_candidate;
 
   if (!node->can_change_signature && !allow_no_signature_clone)
