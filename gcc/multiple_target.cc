@@ -197,22 +197,51 @@ create_dispatcher_calls (struct cgraph_node *node)
      to IPA clones (constprop, etc.) of NODE.  These clones are in
      NODE->clones (only virtual/IPA clones, not FMV version clones).
 
-     We selectively redirect callers of these IPA clones: only redirect
-     callers that are themselves FMV version functions (have function_version
-     info).  Such callers can later be resolved by redirect_to_specific_clone
-     to call the matching architecture version directly (e.g., rhs3d.v3
-     calling rhs3d_tile.v3).
+     The redirect strategy depends on how many IPA clones exist:
 
-     Callers that are NOT FMV versions (e.g., brute() calling
-     digits_2.constprop.0 in exchange2) are left alone.  Redirecting them
-     would lose the IPA-CP constprop benefit without any FMV gain, since
-     redirect_to_specific_clone cannot resolve IFUNC calls from non-versioned
-     callers.  */
+     When there are many IPA clones (>= 2), it indicates deep specialization
+     (e.g., exchange2's digits_2 with 7 recursive depth-specialized clones).
+     In this case, only redirect callers that are themselves FMV version
+     functions (have function_version info).  Non-FMV callers (e.g., brute()
+     calling digits_2.constprop.N) are left alone to preserve the critical
+     constprop benefit.
+
+     When there is only a single IPA clone, the constprop specialization is
+     typically minor (e.g., a loop bound in roms' tile functions).  In this
+     case, redirect ALL callers to the FMV dispatcher.  The SIMD dispatch
+     benefit (e.g., AVX-512 vectorization) far outweighs the minor constprop
+     loss.  For IFUNC-capable (global) functions, dispatch happens at load
+     time via the dynamic linker.  For local functions, redirect_to_specific_
+     clone resolves FMV-version callers, while redirecting non-FMV callers
+     to the dispatcher ensures the linker emits IRELATIVE relocations for
+     proper runtime dispatch.  */
+  int ipa_clone_count = 0;
+  for (cgraph_node *c = node->clones; c; c = c->next_sibling_clone)
+    ipa_clone_count++;
+
   auto collect_clone_callers
     = [&] (cgraph_node *clone, auto &self) -> void {
       for (cgraph_edge *e = clone->callers; e; e = e->next_caller)
-	if (e->caller->function_version ())
-	  edges_to_redirect.safe_push (e);
+	{
+	  if (ipa_clone_count >= 2)
+	    {
+	      /* Many IPA clones: only redirect FMV-versioned callers.  */
+	      if (e->caller->function_version ())
+		edges_to_redirect.safe_push (e);
+	    }
+	  else
+	    edges_to_redirect.safe_push (e);
+	}
+      /* For single IPA clones, also redirect references so the clone
+	 can be eliminated as dead code.  */
+      if (ipa_clone_count < 2)
+	{
+	  while (clone->iterate_referring (0, ref))
+	    {
+	      references_to_redirect.safe_push (*ref);
+	      ref->remove_reference ();
+	    }
+	}
       for (cgraph_node *c = clone->clones; c; c = c->next_sibling_clone)
 	self (c, self);
     };
