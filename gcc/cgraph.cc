@@ -3798,6 +3798,42 @@ cgraph_edge::verify_corresponds_to_fndecl (tree decl)
       tree origin2 = DECL_ABSTRACT_ORIGIN (callee->decl);
       if (origin1 && origin2 && origin1 == origin2)
 	return false;
+
+      /* When FMV creates ifunc aliases, gimple call stmts may reference the
+	 ifunc DECL while the edge callee is an IPA-generated clone (constprop,
+	 ISRA) of a function dispatched by the ifunc.  This legitimately occurs
+	 because: (a) virtual clones share gimple bodies with their parent, and
+	 FMV's redirect_call_stmt_to_callee modifies the shared gimple; or
+	 (b) IPA-SRA creates new virtual clones after FMV expansion.
+	 Accept if the callee is a clone of any version in the ifunc's dispatch
+	 set.  */
+      cgraph_node *decl_node = cgraph_node::get (decl);
+      if (decl_node && decl_node->alias)
+	{
+	  cgraph_function_version_info *vi = decl_node->function_version ();
+	  if (vi)
+	    for (cgraph_function_version_info *v = vi->next; v; v = v->next)
+	      if (clone_of_p (v->this_node, callee)
+		  || v->this_node == callee)
+		return false;
+	}
+
+      /* Reverse case: the edge callee is the ifunc alias, but gimple
+	 references a version (.default, .arch_v3, etc.) or an IPA clone
+	 thereof.  This occurs when IPA-SRA materializes a virtual clone's
+	 body from the version function: the copied gimple references the
+	 version's DECL while the clone's edge (redirected during FMV
+	 expansion) still points to the ifunc.  */
+      if (callee->alias)
+	{
+	  cgraph_function_version_info *cvi = callee->function_version ();
+	  if (cvi)
+	    for (cgraph_function_version_info *v = cvi->next; v; v = v->next)
+	      if (v->this_node == node
+		  || clone_of_p (v->this_node, node))
+		return false;
+	}
+
       return true;
     }
   else

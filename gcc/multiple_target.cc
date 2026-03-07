@@ -162,6 +162,31 @@ create_dispatcher_calls (struct cgraph_node *node)
   for (cgraph_edge *e = node->callers; e ; e = e->next_caller)
     edges_to_redirect.safe_push (e);
 
+  /* When FMV runs after IPA-CP, callers of NODE may have been redirected
+     to IPA clones (constprop, etc.) of NODE.  These clones are in
+     NODE->clones (only virtual/IPA clones, not FMV version clones).
+     Redirect callers of these IPA clones to the IFUNC dispatcher as well,
+     so that all call sites go through FMV dispatch.  At this point IPA-SRA
+     has not yet run, so the call signatures still match the original.
+     Later, redirect_to_specific_clone will resolve the IFUNC calls to
+     direct calls to the appropriate FMV version (e.g., rhs3d.v3 calling
+     rhs3d_tile.v3 directly instead of through IFUNC dispatch).  */
+  auto collect_clone_callers
+    = [&] (cgraph_node *clone, auto &self) -> void {
+      for (cgraph_edge *e = clone->callers; e; e = e->next_caller)
+	edges_to_redirect.safe_push (e);
+      while (clone->iterate_referring (0, ref))
+	{
+	  references_to_redirect.safe_push (*ref);
+	  ref->remove_reference ();
+	}
+      for (cgraph_node *c = clone->clones; c; c = c->next_sibling_clone)
+	self (c, self);
+    };
+  for (cgraph_node *clone = node->clones; clone;
+       clone = clone->next_sibling_clone)
+    collect_clone_callers (clone, collect_clone_callers);
+
   if (!edges_to_redirect.is_empty () || !references_to_redirect.is_empty ())
     {
       /* Redirect edges.  */
@@ -171,6 +196,31 @@ create_dispatcher_calls (struct cgraph_node *node)
 	{
 	  e->redirect_callee (inode);
 	  cgraph_edge::redirect_call_stmt_to_callee (e);
+	  /* Virtual clones (e.g., IPA-CP constprop clones) share the
+	     caller's gimple body.  redirect_call_stmt_to_callee above
+	     has already modified the shared call stmt to reference the
+	     ifunc DECL.  Fix up the corresponding edges in all virtual
+	     clones so their edge callees match the gimple.  Walk the
+	     clone tree recursively to handle nested virtual clones.  */
+	  if (e->caller->clones)
+	    {
+	      gimple *stmt = e->call_stmt;
+	      auto fixup = [&] (cgraph_node *clone, auto &self) -> void {
+		for (cgraph_edge *ce = clone->callees; ce;
+		     ce = ce->next_callee)
+		  if (ce->call_stmt == stmt)
+		    {
+		      ce->redirect_callee (inode);
+		      break;
+		    }
+		for (cgraph_node *c = clone->clones; c;
+		     c = c->next_sibling_clone)
+		  self (c, self);
+	      };
+	      for (cgraph_node *clone = e->caller->clones; clone;
+		   clone = clone->next_sibling_clone)
+		fixup (clone, fixup);
+	    }
 	}
 
       /* Redirect references.  */
@@ -188,11 +238,42 @@ create_dispatcher_calls (struct cgraph_node *node)
 		  walk_tree (&DECL_INITIAL (ref->referring->decl),
 			     replace_function_decl, &wi, &visited_nodes);
 		}
-	      else
+	      else if (ref->stmt && gimple_bb (ref->stmt))
 		{
-		  gimple_stmt_iterator it = gsi_for_stmt (ref->stmt);
-		  if (ref->referring->decl != resolver_decl)
-		    walk_gimple_stmt (&it, NULL, replace_function_decl, &wi);
+		  /* When IPA-CP redirects a call edge to a constprop/ISRA
+		     clone (virtual clone), the gimple call stmt still
+		     references the original function's DECL (updated lazily
+		     during materialization).  Do not replace the DECL in
+		     such call stmts, as this would make the gimple call
+		     reference the ifunc while the edge callee remains the
+		     clone, causing verify_cgraph_node failures.
+
+		     Only skip if the call actually targets NODE's DECL
+		     (i.e., this is an IPA-redirected call where the gimple
+		     call target still references the original function).
+		     Do NOT skip if NODE's DECL merely appears as an
+		     argument (e.g., function pointer passed as a callback),
+		     since we must replace that address-taking reference
+		     with the ifunc so that indirect calls dispatch
+		     correctly.  */
+		  bool skip_walk = false;
+		  cgraph_node *ref_cnode
+		    = dyn_cast<cgraph_node *> (ref->referring);
+		  if (ref_cnode && is_gimple_call (ref->stmt))
+		    {
+		      cgraph_edge *ref_edge
+			= ref_cnode->get_edge (ref->stmt);
+		      if (ref_edge && ref_edge->callee != node
+			  && gimple_call_fndecl (ref->stmt) == node->decl)
+			skip_walk = true;
+		    }
+		  if (!skip_walk)
+		    {
+		      gimple_stmt_iterator it = gsi_for_stmt (ref->stmt);
+		      if (ref->referring->decl != resolver_decl)
+			walk_gimple_stmt (&it, NULL,
+					  replace_function_decl, &wi);
+		    }
 		}
 
 	      symtab_node *source = ref->referring;
@@ -263,12 +344,13 @@ create_target_clone (cgraph_node *node, bool definition, char *name,
    function expand_target_clones below.  */
 static bool node_versionable_function_p (cgraph_node *node)
 {
-  return (!node->definition
-	  || (!node->alias && tree_versionable_function_p (node->decl)))
-          && !DECL_DECLARED_INLINE_P (node->decl) 
-	  && !DECL_VIRTUAL_P (node->decl)
-	  && (!DECL_FUNCTION_VERSIONED (node->decl)
+  bool cond1 = (!node->definition
+	  || (!node->alias && tree_versionable_function_p (node->decl)));
+  bool cond2 = !DECL_DECLARED_INLINE_P (node->decl);
+  bool cond3 = !DECL_VIRTUAL_P (node->decl);
+  bool cond4 = (!DECL_FUNCTION_VERSIONED (node->decl)
 	      || is_function_default_version (node->decl));
+  return cond1 && cond2 && cond3 && cond4;
 }
 
 /* If the function in NODE has multiple target attributes
@@ -302,21 +384,50 @@ expand_target_clones (struct cgraph_node *node, bool definition,
       return false;
     }
 
-  if (DECL_INITIAL (node->decl) != NULL_TREE)
+  if (DECL_INITIAL (node->decl) != NULL_TREE
+      || (node->clone_of && node->definition))
     {
-      auto it = clone_map.find (IDENTIFIER_POINTER (
-				DECL_ASSEMBLER_NAME_RAW (node->decl)));
+      const char *asm_name = IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME_RAW (node->decl));
+      auto it = clone_map.find (asm_name);
       /* Also try DECL_NAME for Fortran module functions where the JSON
 	 profile may use the short name (e.g., "rhs3d_tile") while the
 	 assembler name is mangled (e.g., "__rhs3d_mod_MOD_rhs3d_tile").
 	 Skip nested/contained functions (decl_function_context != NULL)
-	 because ifunc dispatch does not support static chains.
-	 Skip clones (clone_of != NULL) to avoid expanding IPA-generated
-	 clones that were derived from the original function.  */
+	 because ifunc dispatch does not support static chains.  */
       if (it == clone_map.end () && DECL_NAME (node->decl)
 	  && !decl_function_context (node->decl)
 	  && !node->clone_of)
 	it = clone_map.find (IDENTIFIER_POINTER (DECL_NAME (node->decl)));
+      /* For IPA-generated clones (constprop, ISRA), walk up the clone_of
+	 chain to find the original function in the table.  This enables
+	 FMV expansion of clones created by IPA-CP/IPA-SRA when table-based
+	 FMV is deferred to after those passes.  */
+      bool found_via_clone_of = false;
+      if (it == clone_map.end () && node->clone_of)
+	{
+	  cgraph_node *orig = node->clone_of;
+	  while (orig->clone_of)
+	    orig = orig->clone_of;
+	  if (!decl_function_context (orig->decl))
+	    {
+	      it = clone_map.find (
+		IDENTIFIER_POINTER (
+		  DECL_ASSEMBLER_NAME_RAW (orig->decl)));
+	      if (it == clone_map.end () && DECL_NAME (orig->decl))
+		it = clone_map.find (
+		  IDENTIFIER_POINTER (DECL_NAME (orig->decl)));
+	    }
+	  if (it != clone_map.end ())
+	    found_via_clone_of = true;
+	}
+      /* Do not FMV-expand IPA-generated clones (constprop, ISRA) found via
+	 clone_of chain.  The original function will be expanded instead,
+	 and IPA-SRA will later create ISRA clones of the FMV versions.
+	 Expanding clones directly causes edge/stmt mismatches because
+	 create_dispatcher_calls cannot properly redirect pre-existing
+	 callers of the clone.  */
+      if (found_via_clone_of)
+	return false;
       if (it != clone_map.end () && node_versionable_function_p (node))
 	{
 	  /* Merge valid target attributes from -ftarget-clones-table.  */
@@ -340,7 +451,23 @@ expand_target_clones (struct cgraph_node *node, bool definition,
 
   /* If there is no target_clones attribute, nothing to do.  */
   if (attr_list.is_empty ())
+    {
       return false;
+    }
+
+  /* When IPA-CP creates constprop clones of a table-FMV function, it may
+     mark the original as definition=false while keeping the body
+     (DECL_STRUCT_FUNCTION still set).  Restore the definition flag so
+     FMV expansion can create proper version clones with bodies.  */
+  if (!definition && !attr_target
+      && DECL_STRUCT_FUNCTION (node->decl) != NULL)
+    {
+      definition = true;
+      node->definition = 1;
+    }
+  /* If truly dead (no body at all), skip.  */
+  if (!definition && !attr_target)
+    return false;
 
   /* No need to clone for 1 target attribute.  */
   if (attr_list.length () == 1 && TARGET_HAS_FMV_TARGET_ATTRIBUTE)
@@ -773,21 +900,23 @@ ipa_target_clone (bool early)
 
   /* With -ftarget-clones-table enabled, pass_target_clone(false) is scheduled
      twice:
-       1. Before IPA-SRA: expand all target_clones (annotation and table-based).
-       2. After IPA-SRA: dispatch ISRA-generated FMV clones.  */
+       1. Before IPA-CP/IPA-SRA: defer table-based FMV so IPA optimizations
+	  can create constprop and ISRA clones of the original function.
+       2. After IPA-CP/IPA-SRA: expand table-based FMV for the original
+	  function and any IPA-generated clones (constprop, ISRA).  */
   bool process_table = false;
   if (!early && target_clones_table)
     {
       non_early_pass_count++;
       if (non_early_pass_count == 1)
 	{
-	  /* First non-early: expand all FMV.  */
-	  process_table = true;
+	  /* First non-early (before IPA-CP): defer table FMV.  */
+	  process_table = false;
 	}
       else if (non_early_pass_count == 2)
 	{
-	  /* Second non-early (after IPA-SRA): ISRA dispatch only.  */
-	  process_table = false;
+	  /* Second non-early (after IPA-CP/SRA): expand table FMV.  */
+	  process_table = true;
 	}
       else
 	return 0;
@@ -838,10 +967,31 @@ ipa_target_clone (bool early)
 		  && !node->clone_of)
 		it = clone_map.find (
 		  IDENTIFIER_POINTER (DECL_NAME (node->decl)));
+	      /* Also check IPA-generated clones (constprop, ISRA) whose
+		 original function is in the table.  */
+	      if (it == clone_map.end () && node->clone_of)
+		{
+		  cgraph_node *orig = node->clone_of;
+		  while (orig->clone_of)
+		    orig = orig->clone_of;
+		  it = clone_map.find (
+		    IDENTIFIER_POINTER (
+		      DECL_ASSEMBLER_NAME_RAW (orig->decl)));
+		  if (it == clone_map.end () && DECL_NAME (orig->decl)
+		      && !decl_function_context (orig->decl))
+		    it = clone_map.find (
+		      IDENTIFIER_POINTER (DECL_NAME (orig->decl)));
+		}
 	      found_in_table = (it != clone_map.end ());
 	    }
 	  if (found_in_table)
-	    continue;
+	    {
+	      /* Mark the node so IPA-CP doesn't release its body.  The
+		 deferred FMV expansion in pass 2 needs the definition
+		 intact to create version clones with bodies.  */
+	      node->force_output = true;
+	      continue;
+	    }
 	}
 
       if (early == !is_simple_target_clones_case (node))

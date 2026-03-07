@@ -1127,6 +1127,11 @@ cgraph_node::create_version_clone (tree new_decl,
      }
    new_version->calls_comdat_local = new_version->check_calls_comdat_local_p ();
 
+   /* Clone references (including those backing speculative edges).
+      Without this, speculative devirtualization references from the original
+      are lost in the new version, causing verify_cgraph_node failures.  */
+   new_version->clone_references (this);
+
    dump_callgraph_transformation (this, new_version, suffix);
 
    return new_version;
