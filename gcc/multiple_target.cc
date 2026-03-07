@@ -160,26 +160,59 @@ create_dispatcher_calls (struct cgraph_node *node)
 
   /* We need to remember NEXT_CALLER as it could be modified in the loop.  */
   for (cgraph_edge *e = node->callers; e ; e = e->next_caller)
-    edges_to_redirect.safe_push (e);
+    {
+      /* Skip edges from the node itself (self-recursive default call) and
+	 from its virtual/IPA clones (e.g., constprop clones).  These callers
+	 share the node's gimple body via the clone_of chain.  Calling
+	 redirect_call_stmt_to_callee on these edges would modify the shared
+	 gimple statements, causing all virtual clones to see the IFUNC call
+	 instead of their original direct/recursive call.  This would
+	 eliminate the IPA-CP constprop optimization benefit for those clones.
+
+	 FMV version clones (created via create_version_clone_with_body) have
+	 their own independent gimple bodies and are NOT virtual clones
+	 (clone_of is not set), so their edges are safe to redirect.  After
+	 redirect, redirect_to_specific_clone resolves their IFUNC calls to
+	 direct architecture-matched calls (e.g., digits_2.v3 → digits_2.v3
+	 self-recursive call).  */
+      bool is_self_or_virtual_clone = (e->caller == node);
+      if (!is_self_or_virtual_clone)
+	{
+	  cgraph_node *c = e->caller;
+	  while (c->clone_of)
+	    {
+	      if (c->clone_of == node)
+		{
+		  is_self_or_virtual_clone = true;
+		  break;
+		}
+	      c = c->clone_of;
+	    }
+	}
+      if (!is_self_or_virtual_clone)
+	edges_to_redirect.safe_push (e);
+    }
 
   /* When FMV runs after IPA-CP, callers of NODE may have been redirected
      to IPA clones (constprop, etc.) of NODE.  These clones are in
      NODE->clones (only virtual/IPA clones, not FMV version clones).
-     Redirect callers of these IPA clones to the IFUNC dispatcher as well,
-     so that all call sites go through FMV dispatch.  At this point IPA-SRA
-     has not yet run, so the call signatures still match the original.
-     Later, redirect_to_specific_clone will resolve the IFUNC calls to
-     direct calls to the appropriate FMV version (e.g., rhs3d.v3 calling
-     rhs3d_tile.v3 directly instead of through IFUNC dispatch).  */
+
+     We selectively redirect callers of these IPA clones: only redirect
+     callers that are themselves FMV version functions (have function_version
+     info).  Such callers can later be resolved by redirect_to_specific_clone
+     to call the matching architecture version directly (e.g., rhs3d.v3
+     calling rhs3d_tile.v3).
+
+     Callers that are NOT FMV versions (e.g., brute() calling
+     digits_2.constprop.0 in exchange2) are left alone.  Redirecting them
+     would lose the IPA-CP constprop benefit without any FMV gain, since
+     redirect_to_specific_clone cannot resolve IFUNC calls from non-versioned
+     callers.  */
   auto collect_clone_callers
     = [&] (cgraph_node *clone, auto &self) -> void {
       for (cgraph_edge *e = clone->callers; e; e = e->next_caller)
-	edges_to_redirect.safe_push (e);
-      while (clone->iterate_referring (0, ref))
-	{
-	  references_to_redirect.safe_push (*ref);
-	  ref->remove_reference ();
-	}
+	if (e->caller->function_version ())
+	  edges_to_redirect.safe_push (e);
       for (cgraph_node *c = clone->clones; c; c = c->next_sibling_clone)
 	self (c, self);
     };
