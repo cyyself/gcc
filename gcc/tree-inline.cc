@@ -325,6 +325,19 @@ remap_ssa_name (tree name, copy_body_data *id)
 	      set_ssa_default_def (cfun, SSA_NAME_VAR (new_tree), new_tree);
 	    }
 	}
+      else if (id->param_body_adjs
+	       && SSA_NAME_DEF_STMT (name)
+	       && id->param_body_adjs->m_dead_stmts.contains (
+		    SSA_NAME_DEF_STMT (name)))
+	{
+	  /* The defining statement of this SSA name was marked dead by
+	     IPA-SRA body adjustments but the SSA name still has live uses
+	     (its dead status could not be fully propagated).  Create a
+	     default definition to avoid leaving a NULL DEF_STMT which
+	     would cause SSA verification failures.  */
+	  SSA_NAME_DEF_STMT (new_tree) = gimple_build_nop ();
+	  set_ssa_default_def (cfun, SSA_NAME_VAR (new_tree), new_tree);
+	}
     }
   else
     insert_decl_map (id, name, new_tree);
@@ -5461,7 +5474,9 @@ gimple_expand_calls_inline (basic_block bb, copy_body_data *id,
 
       if (is_gimple_call (stmt)
 	  && !gimple_call_internal_p (stmt))
-	inlined |= expand_call_inline (bb, stmt, id, to_purge);
+	{
+	  inlined |= expand_call_inline (bb, stmt, id, to_purge);
+	}
     }
 
   return inlined;
@@ -5650,6 +5665,7 @@ optimize_inline_calls (tree fn)
      follow it; we'll trudge through them, processing their CALL_EXPRs
      along the way.  */
   auto_bitmap to_purge;
+
   FOR_EACH_BB_FN (bb, cfun)
     inlined_p |= gimple_expand_calls_inline (bb, &id, to_purge);
 
@@ -5699,6 +5715,7 @@ optimize_inline_calls (tree fn)
   number_blocks (fn);
 
   delete_unreachable_blocks_update_callgraph (id.dst_node, false);
+
   id.dst_node->calls_comdat_local = id.dst_node->check_calls_comdat_local_p ();
 
   if (flag_checking)
@@ -6570,6 +6587,53 @@ tree_function_versioning (tree old_decl, tree new_decl,
       fix_loop_structure (NULL);
     }
   update_ssa (TODO_update_ssa);
+
+  /* After copy_body and update_ssa, some SSA names may have invalid
+     DEF_STMTs.  This can happen when IPA-SRA body adjustments mark
+     defining statements as dead but the SSA name still has live uses
+     whose dead status could not be fully propagated.  The dead defining
+     statement is not copied, but the SSA name is created during
+     remap_ssa_name for the live use.  Fix up any such SSA names by
+     creating default definitions or inserting zero-initializations.  */
+  {
+    tree name;
+    unsigned k;
+    int fixed = 0;
+    gimple_stmt_iterator entry_gsi = gsi_start_bb (
+      single_succ (ENTRY_BLOCK_PTR_FOR_FN (cfun)));
+    FOR_EACH_SSA_NAME (k, name, cfun)
+      {
+	gimple *stmt = SSA_NAME_DEF_STMT (name);
+	bool needs_fix = false;
+	if (!stmt)
+	  needs_fix = true;
+	else if (!gimple_nop_p (stmt) && !gimple_bb (stmt))
+	  needs_fix = true;
+
+	if (needs_fix
+	    && !SSA_NAME_IS_DEFAULT_DEF (name))
+	  {
+	    if (SSA_NAME_VAR (name))
+	      {
+		/* Named SSA: make it a default definition.  */
+		SSA_NAME_DEF_STMT (name) = gimple_build_nop ();
+		set_ssa_default_def (cfun, SSA_NAME_VAR (name), name);
+	      }
+	    else
+	      {
+		/* Anonymous SSA name: cannot be a default def, so insert
+		   a zero-initialization in the entry block.  */
+		gimple *init = gimple_build_assign (
+		  name, build_zero_cst (TREE_TYPE (name)));
+		gsi_insert_before (&entry_gsi, init, GSI_SAME_STMT);
+	      }
+	    fixed++;
+	  }
+      }
+    if (dump_file && fixed)
+      fprintf (dump_file, "Fixed %d SSA names with missing definitions "
+	       "after body copy and SSA update\n", fixed);
+  }
 
   /* After partial cloning we need to rescale frequencies, so they are
      within proper range in the cloned function.  */

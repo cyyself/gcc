@@ -4322,7 +4322,11 @@ process_isra_node_results (cgraph_node *node,
       auto_vec<cgraph_edge *> probe_callers;
       node->call_for_symbol_and_aliases (collect_symbol_and_alias_callers,
 					 &probe_callers, true);
-      will_change_function = (!probe_callers.is_empty () || node->address_taken);
+      /* For FMV no-signature clones, require at least one direct caller.
+	 address_taken alone (e.g., from the FMV resolver) is not sufficient
+	 because no caller benefits from the clone, and creating a dead
+	 virtual clone can corrupt the original function's SSA state.  */
+      will_change_function = !probe_callers.is_empty ();
       if (!will_change_function
 	  && dump_file && (dump_flags & TDF_DETAILS))
 	fprintf (dump_file, "  Not creating no-signature ISRA clone of %s "
@@ -4810,7 +4814,17 @@ ipa_sra_analysis (void)
   FOR_EACH_VEC_ELT (callers, i, e)
     {
       e->redirect_callee (rec.new_node);
-      cgraph_edge::redirect_call_stmt_to_callee (e);
+      /* Only update the gimple call statement for materialized callers
+	 (those with SSA operands active).  Virtual clone callers share
+	 their call_stmt pointers with the original materialized function;
+	 modifying the shared statement here without being able to clear
+	 the modified flag (because SSA is not active for virtual clones)
+	 would leave the materialized function's statement permanently
+	 marked modified, triggering verify_ssa failures.  Virtual clones
+	 will have their call statements properly updated when they are
+	 materialized via tree_function_versioning and redirect_all_calls.  */
+      if (ssa_operands_active (DECL_STRUCT_FUNCTION (e->caller->decl)))
+	cgraph_edge::redirect_call_stmt_to_callee (e);
     }
   callers.release ();
       }
@@ -4825,6 +4839,7 @@ ipa_sra_analysis (void)
   if (dump_file)
     fprintf (dump_file, "\n========== IPA SRA IPA analysis done "
 	     "==========\n\n");
+
   return 0;
 }
 

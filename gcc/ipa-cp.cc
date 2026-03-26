@@ -1451,7 +1451,13 @@ initialize_node_lattices (struct cgraph_node *node)
 						  NULL, true);
       else if (caller_count == 0)
 	{
-	  gcc_checking_assert (!opt_for_fn (node->decl, flag_toplevel_reorder));
+	  /* Normally, a local function with zero callers and toplevel-reorder
+	     enabled would have been removed.  However, force_output nodes
+	     (e.g., those kept alive for deferred table-based FMV expansion)
+	     can legitimately have zero callers at this point.  Treat them
+	     the same as the -fno-toplevel-reorder case.  */
+	  gcc_checking_assert (!opt_for_fn (node->decl, flag_toplevel_reorder)
+			       || node->force_output);
 	  variable = true;
 	}
     }

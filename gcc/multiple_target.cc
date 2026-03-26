@@ -152,11 +152,19 @@ create_dispatcher_calls (struct cgraph_node *node)
      some other reference pointers point to.  */
   auto_vec<ipa_ref> references_to_redirect;
 
-  while (node->iterate_referring (0, ref))
-    {
-      references_to_redirect.safe_push (*ref);
-      ref->remove_reference ();
-    }
+  {
+    unsigned ref_idx = 0;
+    while (node->iterate_referring (ref_idx, ref))
+      {
+	if (ref->speculative)
+	  {
+	    ref_idx++;
+	    continue;
+	  }
+	references_to_redirect.safe_push (*ref);
+	ref->remove_reference ();
+      }
+  }
 
   /* We need to remember NEXT_CALLER as it could be modified in the loop.  */
   for (cgraph_edge *e = node->callers; e ; e = e->next_caller)
@@ -189,7 +197,7 @@ create_dispatcher_calls (struct cgraph_node *node)
 	      c = c->clone_of;
 	    }
 	}
-      if (!is_self_or_virtual_clone)
+      if (!is_self_or_virtual_clone && !e->speculative)
 	edges_to_redirect.safe_push (e);
     }
 
@@ -223,6 +231,11 @@ create_dispatcher_calls (struct cgraph_node *node)
     = [&] (cgraph_node *clone, auto &self) -> void {
       for (cgraph_edge *e = clone->callers; e; e = e->next_caller)
 	{
+	  /* Skip speculative edges - they have complex call sequences
+	     with associated references that redirect_call_stmt_to_callee
+	     cannot handle after reference removal.  */
+	  if (e->speculative)
+	    continue;
 	  if (ipa_clone_count >= 2)
 	    {
 	      /* Many IPA clones: only redirect FMV-versioned callers.  */
@@ -233,11 +246,18 @@ create_dispatcher_calls (struct cgraph_node *node)
 	    edges_to_redirect.safe_push (e);
 	}
       /* For single IPA clones, also redirect references so the clone
-	 can be eliminated as dead code.  */
+	 can be eliminated as dead code.  Skip speculative references
+	 as they are tied to speculative edges we also skip.  */
       if (ipa_clone_count < 2)
 	{
-	  while (clone->iterate_referring (0, ref))
+	  unsigned ref_idx = 0;
+	  while (clone->iterate_referring (ref_idx, ref))
 	    {
+	      if (ref->speculative)
+		{
+		  ref_idx++;
+		  continue;
+		}
 	      references_to_redirect.safe_push (*ref);
 	      ref->remove_reference ();
 	    }
@@ -403,12 +423,16 @@ create_target_clone (cgraph_node *node, bool definition, char *name,
 
 /* Skip functions that are declared but not defined.  Also skip C++
    virtual functions, as they cannot be cloned.  The same logic is in the
-   function expand_target_clones below.  */
-static bool node_versionable_function_p (cgraph_node *node)
+   function expand_target_clones below.
+   When TABLE_BASED is true (processing -ftarget-clones-table entries),
+   inline functions are allowed since they appear in PGO profiles as hot
+   functions and need versioned clones for proper dispatch and inlining.  */
+static bool node_versionable_function_p (cgraph_node *node,
+					bool table_based = false)
 {
   bool cond1 = (!node->definition
 	  || (!node->alias && tree_versionable_function_p (node->decl)));
-  bool cond2 = !DECL_DECLARED_INLINE_P (node->decl);
+  bool cond2 = table_based || !DECL_DECLARED_INLINE_P (node->decl);
   bool cond3 = !DECL_VIRTUAL_P (node->decl);
   bool cond4 = (!DECL_FUNCTION_VERSIONED (node->decl)
 	      || is_function_default_version (node->decl));
@@ -490,7 +514,7 @@ expand_target_clones (struct cgraph_node *node, bool definition,
 	 callers of the clone.  */
       if (found_via_clone_of)
 	return false;
-      if (it != clone_map.end () && node_versionable_function_p (node))
+      if (it != clone_map.end () && node_versionable_function_p (node, true))
 	{
 	  /* Merge valid target attributes from -ftarget-clones-table.  */
 	  for (string_slice attr : it->second)

@@ -54,6 +54,9 @@ along with GCC; see the file COPYING3.  If not see
 #include "ipa-modref-tree.h"
 #include "ipa-modref.h"
 #include "symtab-thunks.h"
+#include "backend.h"
+#include "gimple.h"
+#include "ssa.h"
 #include "symtab-clones.h"
 
 int ncalls_inlined;
@@ -846,6 +849,7 @@ inline_transform (struct cgraph_node *node)
     }
 
   maybe_materialize_called_clones (node);
+
   for (e = node->callees; e; e = next)
     {
       if (!e->inline_failed)
